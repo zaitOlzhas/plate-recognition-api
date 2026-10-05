@@ -12,6 +12,7 @@ docker compose up -d --build
 | What | URL |
 |---|---|
 | **Webhook URL to configure in the LPR system** | `http://<host>:5080/api/events/plate` |
+| **Events viewer (web page)** | `http://<host>:5080/` |
 | List events | `http://<host>:5080/api/events` |
 | Swagger UI | `http://<host>:5080/swagger` |
 | Health | `http://<host>:5080/health` |
@@ -26,6 +27,7 @@ Data is stored in `/data/events.db` inside the named volume `lpr-data`, so it su
 | `API_KEY` | *(empty)* | If set, `POST /api/events/plate` requires the header `X-Api-Key: <value>` (401 otherwise). If empty, all requests are accepted. |
 | `ConnectionStrings__Default` | `Data Source=/data/events.db` | SQLite connection string. |
 | `Swagger__Enabled` | `true` | Serves `/swagger` and `/openapi/v1.json`, in Production too. Compose reads it from `SWAGGER_ENABLED`. |
+| `Cors__AllowedOrigins` | *(empty)* | Comma-separated origins allowed to read the API from a browser (GET only). Use `null` to open `index.html` straight from disk. Compose reads it from `CORS_ALLOWED_ORIGINS`. |
 | `Logging__Console__FormatterName` | `json` | `json` writes one JSON object per line. `simple` gives plain-text lines. |
 | `Logging__LogLevel__LprWebhook.RawBody` | `Debug` | Raw request bodies are logged at Debug. Set this to `Information` to stop logging them. |
 
@@ -63,6 +65,20 @@ curl "http://localhost:5080/api/events?plate=123ABC&cameraId=cam-001&page=1&page
 curl "http://localhost:5080/api/events/<id>"     # includes rawJson, the exact body the vendor sent
 docker compose logs -f lpr-webhook
 ```
+
+## Events viewer
+
+Open `http://<host>:5080/` in a browser. The page is `src/LprWebhook.Api/wwwroot/index.html`, a single file with no
+external dependencies, and it is read-only.
+
+- **Table:** received time (in your local time), camera time, plate, direction, list, camera and server, newest first.
+- **Filters:** plate (matches any part), camera ID, received from/to, and page size, with pagination.
+- **Refresh:** a Refresh button, plus auto-refresh every 3–60 s (on by default). Auto-refresh pauses while the tab is
+  hidden or a detail view is open, and refreshes as soon as you come back. New events are briefly highlighted.
+- **Details:** click a row to see every field and the raw JSON exactly as received, with a Copy button.
+
+You can also open the file straight from disk. In that case set `CORS_ALLOWED_ORIGINS=null`, because otherwise the
+browser blocks the requests. The page has an API field for when the service isn't on `localhost:5080`.
 
 ## API
 

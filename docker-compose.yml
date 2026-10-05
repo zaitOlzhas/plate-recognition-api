@@ -15,6 +15,8 @@ services:
       # Leave empty to accept unauthenticated webhooks; set it (e.g. in .env) to require X-Api-Key.
       API_KEY: ${API_KEY:-}
       Swagger__Enabled: ${SWAGGER_ENABLED:-true}
+      # Only needed to open wwwroot/index.html from disk instead of http://<host>:5080/ — use "null" for that.
+      Cors__AllowedOrigins: ${CORS_ALLOWED_ORIGINS:-}
     volumes:
       - lpr-data:/data
     healthcheck:

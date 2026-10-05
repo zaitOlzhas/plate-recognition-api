@@ -1,0 +1,434 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LPR Events</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --panel: #ffffff; --text: #1a1d21; --muted: #5d6875; --border: #dde1e6;
+    --accent: #2457d6; --accent-text: #ffffff; --hover: #f0f3f7; --new: #fff4c2;
+    --in: #146c34; --in-bg: #daf5e3; --out: #9a4a06; --out-bg: #fdecd2;
+    --ok: #1f9d55; --bad: #d23c3c; --err-bg: #fde4e4; --err: #8f1d1d;
+    --mono: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #111418; --panel: #1a1e24; --text: #e6e9ed; --muted: #98a2ae; --border: #2d333b;
+      --accent: #6b93ff; --accent-text: #0d1117; --hover: #222831; --new: #3d3514;
+      --in: #7ee2a2; --in-bg: #173523; --out: #f6bd78; --out-bg: #3c2a12;
+      --ok: #3ccf7a; --bad: #ff6b6b; --err-bg: #3b1a1a; --err: #ffb4b4;
+      color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .wrap { max-width: 1280px; margin: 0 auto; padding: 16px; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-bottom: 12px; }
+  h1 { font-size: 20px; margin: 0; }
+  .health { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+  .dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); }
+  .spacer { flex: 1; }
+  .muted { color: var(--muted); }
+  a { color: var(--accent); }
+
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
+  .toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 12px; padding: 12px; margin-bottom: 12px; }
+  label.field { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); min-width: 0; }
+  input, select, button { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; }
+  input:focus, select:focus, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  input[type="text"] { width: 150px; }
+  input[type="datetime-local"] { width: 200px; }
+  button { cursor: pointer; background: var(--panel); }
+  button:hover:not(:disabled) { background: var(--hover); }
+  button:disabled { opacity: .5; cursor: default; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  button.primary:hover:not(:disabled) { filter: brightness(1.08); background: var(--accent); }
+  .auto { display: flex; align-items: center; gap: 6px; padding-bottom: 6px; }
+  .auto input { width: auto; }
+
+  .error { display: none; background: var(--err-bg); color: var(--err); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
+  .error.show { display: block; }
+
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { font-size: 12px; font-weight: 600; color: var(--muted); position: sticky; top: 0; background: var(--panel); }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover { background: var(--hover); }
+  tbody tr:last-child td { border-bottom: none; }
+  tr.is-new { animation: flash 4s ease-out; }
+  @keyframes flash { from { background: var(--new); } to { background: transparent; } }
+  .plate { font-family: var(--mono); font-weight: 600; font-size: 15px; letter-spacing: .5px; }
+  .mono { font-family: var(--mono); font-size: 13px; }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; background: var(--hover); }
+  .badge.in { color: var(--in); background: var(--in-bg); }
+  .badge.out { color: var(--out); background: var(--out-bg); }
+  .empty { text-align: center; color: var(--muted); padding: 32px 10px; cursor: default; }
+
+  .pager { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--border); }
+
+  dialog { width: min(760px, calc(100vw - 32px)); max-height: calc(100vh - 32px); padding: 0; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); color: var(--text); }
+  dialog::backdrop { background: rgba(0, 0, 0, .45); }
+  .dlg-head { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--panel); }
+  .dlg-head h2 { margin: 0; font-size: 17px; }
+  .dlg-body { padding: 12px 16px 16px; }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0 0 14px; }
+  dt { color: var(--muted); }
+  dd { margin: 0; overflow-wrap: anywhere; }
+  pre { margin: 0; padding: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; overflow: auto; max-height: 360px; font: 12.5px/1.5 var(--mono); }
+  .raw-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+
+  @media (max-width: 600px) {
+    input[type="text"], input[type="datetime-local"] { width: 100%; }
+    label.field { flex: 1 1 140px; }
+    dl { grid-template-columns: 1fr; gap: 0 0; }
+    dd { margin-bottom: 8px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>LPR Events</h1>
+    <span class="health" title="GET /health"><span id="healthDot" class="dot"></span><span id="healthText">checking…</span></span>
+    <span class="spacer"></span>
+    <span id="updated" class="muted"></span>
+  </header>
+
+  <div class="panel toolbar">
+    <label class="field">API
+      <input id="api" type="text" spellcheck="false" style="width: 200px">
+    </label>
+    <label class="field">Plate contains
+      <input id="plate" type="text" placeholder="e.g. 123ABC" spellcheck="false">
+    </label>
+    <label class="field">Camera ID
+      <input id="cameraId" type="text" placeholder="exact, e.g. cam-001" spellcheck="false">
+    </label>
+    <label class="field">Received from (local time)
+      <input id="from" type="datetime-local" step="1">
+    </label>
+    <label class="field">Received to (local time)
+      <input id="to" type="datetime-local" step="1">
+    </label>
+    <label class="field">Page size
+      <select id="pageSize"><option>25</option><option selected>50</option><option>100</option><option>200</option></select>
+    </label>
+    <button id="clear" type="button">Clear filters</button>
+    <span class="spacer"></span>
+    <label class="auto"><input id="auto" type="checkbox"> Auto-refresh</label>
+    <label class="field">Every
+      <select id="interval"><option value="3">3 s</option><option value="5" selected>5 s</option><option value="10">10 s</option><option value="30">30 s</option><option value="60">60 s</option></select>
+    </label>
+    <button id="refresh" type="button" class="primary">Refresh</button>
+  </div>
+
+  <div id="error" class="error" role="alert"></div>
+
+  <div class="panel">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Received</th><th>Camera time</th><th>Plate</th><th>Direction</th>
+            <th>List</th><th>Camera</th><th>Camera ID</th><th>Server</th>
+          </tr>
+        </thead>
+        <tbody id="rows"><tr><td class="empty" colspan="8">Loading…</td></tr></tbody>
+      </table>
+    </div>
+    <div class="pager">
+      <button id="prev" type="button">‹ Newer</button>
+      <button id="next" type="button">Older ›</button>
+      <span id="pageInfo" class="muted"></span>
+      <span class="spacer"></span>
+      <a id="swagger" href="/swagger" target="_blank" rel="noopener">Swagger UI</a>
+    </div>
+  </div>
+</div>
+
+<dialog id="dialog">
+  <div class="dlg-head">
+    <h2 id="dlgTitle">Event</h2>
+    <span class="spacer"></span>
+    <button id="dlgClose" type="button" aria-label="Close">Close</button>
+  </div>
+  <div class="dlg-body">
+    <dl id="dlgFields"></dl>
+    <div class="raw-head"><strong>Raw JSON (as received)</strong><button id="copyRaw" type="button">Copy</button></div>
+    <pre id="dlgRaw"></pre>
+  </div>
+</dialog>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const el = {
+    api: $('api'), plate: $('plate'), cameraId: $('cameraId'), from: $('from'), to: $('to'),
+    pageSize: $('pageSize'), auto: $('auto'), interval: $('interval'), refresh: $('refresh'), clear: $('clear'),
+    rows: $('rows'), prev: $('prev'), next: $('next'), pageInfo: $('pageInfo'), updated: $('updated'),
+    error: $('error'), healthDot: $('healthDot'), healthText: $('healthText'), swagger: $('swagger'),
+    dialog: $('dialog'), dlgTitle: $('dlgTitle'), dlgFields: $('dlgFields'), dlgRaw: $('dlgRaw'),
+    dlgClose: $('dlgClose'), copyRaw: $('copyRaw'),
+  };
+
+  const servedByApi = location.protocol === 'http:' || location.protocol === 'https:';
+  const STORAGE_KEY = 'lpr-events-ui';
+  const state = { page: 1, total: 0, known: new Set(), firstLoad: true, timer: null, controller: null };
+
+  // ---------- settings (per-browser convenience only) ----------
+  function loadSettings() {
+    try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; } catch { return {}; }
+  }
+  function saveSettings() {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        api: el.api.value, pageSize: el.pageSize.value, auto: el.auto.checked, interval: el.interval.value,
+      }));
+    } catch { /* storage unavailable */ }
+  }
+  const saved = loadSettings();
+  el.api.value = saved.api || (servedByApi ? location.origin : 'http://localhost:5080');
+  if (saved.pageSize) el.pageSize.value = saved.pageSize;
+  if (saved.interval) el.interval.value = saved.interval;
+  el.auto.checked = saved.auto !== false;
+
+  const apiBase = () => el.api.value.trim().replace(/\/+$/, '');
+
+  // ---------- formatting ----------
+  const pad = (n, w = 2) => String(n).padStart(w, '0');
+  function fmtReceived(iso) {
+    const d = new Date(iso);
+    if (isNaN(d)) return iso ?? '—';
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
+           `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`;
+  }
+  // Camera time has no timezone: show it exactly as the camera reported it.
+  const fmtCamera = s => s ? s.replace('T', ' ').replace(/(\.\d{3})\d*$/, '$1') : '—';
+  const show = v => (v === null || v === undefined || v === '') ? '—' : String(v);
+
+  function td(text, className) {
+    const cell = document.createElement('td');
+    cell.textContent = text;
+    if (className) cell.className = className;
+    return cell;
+  }
+  function badge(direction) {
+    const cell = document.createElement('td');
+    if (!direction) { cell.textContent = '—'; return cell; }
+    const span = document.createElement('span');
+    const d = direction.toLowerCase();
+    span.className = 'badge' + (d === 'in' ? ' in' : d === 'out' ? ' out' : '');
+    span.textContent = direction;
+    cell.appendChild(span);
+    return cell;
+  }
+
+  // ---------- errors / health ----------
+  function showError(message) {
+    el.error.textContent = message;
+    el.error.classList.toggle('show', !!message);
+  }
+  function networkHint(err) {
+    if (err.name === 'AbortError') return 'Request timed out.';
+    let msg = `Cannot reach ${apiBase()} (${err.message}).`;
+    if (!servedByApi) {
+      msg += ' This page was opened as a local file, so the browser blocks the request unless the API allows it via CORS. ' +
+             'Either open the page from the API at ' + apiBase() + '/ or start the API with CORS_ALLOWED_ORIGINS=null.';
+    }
+    return msg;
+  }
+
+  async function checkHealth() {
+    try {
+      const res = await fetch(`${apiBase()}/health`, { cache: 'no-store' });
+      const text = (await res.text()).trim();
+      el.healthDot.className = 'dot ' + (res.ok ? 'ok' : 'bad');
+      el.healthText.textContent = res.ok ? (text || 'Healthy') : `${res.status} ${text}`;
+    } catch {
+      el.healthDot.className = 'dot bad';
+      el.healthText.textContent = 'unreachable';
+    }
+  }
+
+  // ---------- list ----------
+  function buildQuery() {
+    const q = new URLSearchParams();
+    if (el.plate.value.trim()) q.set('plate', el.plate.value.trim());
+    if (el.cameraId.value.trim()) q.set('cameraId', el.cameraId.value.trim());
+    // datetime-local is in the viewer's local time; the API filters on receivedAtUtc.
+    if (el.from.value) q.set('from', new Date(el.from.value).toISOString());
+    if (el.to.value) q.set('to', new Date(el.to.value).toISOString());
+    q.set('page', state.page);
+    q.set('pageSize', el.pageSize.value);
+    return q;
+  }
+
+  async function load() {
+    clearTimeout(state.timer);
+    state.controller?.abort();
+    const controller = state.controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    el.refresh.disabled = true;
+
+    try {
+      const res = await fetch(`${apiBase()}/api/events?${buildQuery()}`, { cache: 'no-store', signal: controller.signal });
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+      const data = await res.json();
+
+      const pages = Math.max(1, Math.ceil(data.total / data.pageSize));
+      if (state.page > pages && data.total > 0) { state.page = pages; return load(); }
+
+      render(data, pages);
+      showError('');
+      el.updated.textContent = `Updated ${new Date().toLocaleTimeString()}`;
+    } catch (err) {
+      if (controller !== state.controller) return; // superseded by a newer request
+      showError(err instanceof TypeError || err.name === 'AbortError' ? networkHint(err) : err.message);
+    } finally {
+      clearTimeout(timeout);
+      if (controller === state.controller) {
+        el.refresh.disabled = false;
+        scheduleNext();
+      }
+    }
+    checkHealth();
+  }
+
+  function render(data, pages) {
+    state.total = data.total;
+    const fragment = document.createDocumentFragment();
+
+    for (const e of data.items) {
+      const tr = document.createElement('tr');
+      tr.dataset.id = e.id;
+      if (!state.firstLoad && !state.known.has(e.id)) tr.classList.add('is-new');
+      state.known.add(e.id);
+
+      tr.append(
+        td(fmtReceived(e.receivedAtUtc), 'mono'),
+        td(fmtCamera(e.cameraTime), 'mono'),
+        td(e.plateText, 'plate'),
+        badge(e.direction),
+        td(show(e.listName)),
+        td(e.cameraName ? `${e.cameraName}${e.cameraNumber != null ? ' #' + e.cameraNumber : ''}` : show(e.cameraNumber)),
+        td(show(e.cameraId), 'mono'),
+        td(show(e.serverName)),
+      );
+      fragment.appendChild(tr);
+    }
+
+    if (!data.items.length) {
+      const tr = document.createElement('tr');
+      const cell = td('No events match the current filters.', 'empty');
+      cell.colSpan = 8;
+      tr.appendChild(cell);
+      fragment.appendChild(tr);
+    }
+
+    el.rows.replaceChildren(fragment);
+    state.firstLoad = false;
+
+    const start = data.total ? (data.page - 1) * data.pageSize + 1 : 0;
+    const end = Math.min(data.page * data.pageSize, data.total);
+    el.pageInfo.textContent = `${start}–${end} of ${data.total} · page ${data.page} of ${pages}`;
+    el.prev.disabled = data.page <= 1;
+    el.next.disabled = data.page >= pages;
+  }
+
+  // ---------- auto-refresh ----------
+  function scheduleNext() {
+    clearTimeout(state.timer);
+    if (!el.auto.checked || document.hidden) return;
+    state.timer = setTimeout(load, Number(el.interval.value) * 1000);
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) clearTimeout(state.timer);
+    else if (el.auto.checked) load();
+  });
+
+  // ---------- details dialog ----------
+  async function openDetails(id) {
+    el.dlgTitle.textContent = 'Loading…';
+    el.dlgFields.replaceChildren();
+    el.dlgRaw.textContent = '';
+    el.dialog.showModal();
+    clearTimeout(state.timer); // don't refresh underneath an open dialog
+
+    try {
+      const res = await fetch(`${apiBase()}/api/events/${encodeURIComponent(id)}`, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const e = await res.json();
+
+      el.dlgTitle.textContent = e.plateText;
+      const fields = [
+        ['ID', e.id], ['Received (local)', fmtReceived(e.receivedAtUtc)], ['Received (UTC)', e.receivedAtUtc],
+        ['Camera time', fmtCamera(e.cameraTime)], ['Raw timestamp', e.rawTimestamp], ['Event', e.event],
+        ['Plate', e.plateText], ['Direction', e.direction], ['Plate description', e.plateDescription],
+        ['List', e.listName], ['List description', e.listDescription],
+        ['Camera', e.cameraName], ['Camera ID', e.cameraId], ['Camera number', e.cameraNumber], ['Camera index', e.cameraIndex],
+        ['Server', e.serverName], ['Server domain', e.serverDomainName],
+      ];
+      for (const [name, value] of fields) {
+        const dt = document.createElement('dt'); dt.textContent = name;
+        const dd = document.createElement('dd'); dd.textContent = show(value);
+        el.dlgFields.append(dt, dd);
+      }
+      let raw = e.rawJson ?? '';
+      try { raw = JSON.stringify(JSON.parse(raw), null, 2); } catch { /* not valid JSON (e.g. repaired body): show as-is */ }
+      el.dlgRaw.textContent = raw;
+    } catch (err) {
+      el.dlgTitle.textContent = 'Could not load event';
+      el.dlgRaw.textContent = err.message;
+    }
+  }
+
+  el.rows.addEventListener('click', ev => {
+    const tr = ev.target.closest('tr[data-id]');
+    if (tr) openDetails(tr.dataset.id);
+  });
+  el.dlgClose.addEventListener('click', () => el.dialog.close());
+  el.dialog.addEventListener('click', ev => { if (ev.target === el.dialog) el.dialog.close(); });
+  el.dialog.addEventListener('close', scheduleNext);
+  el.copyRaw.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(el.dlgRaw.textContent);
+      el.copyRaw.textContent = 'Copied';
+    } catch {
+      el.copyRaw.textContent = 'Copy failed';
+    }
+    setTimeout(() => (el.copyRaw.textContent = 'Copy'), 1500);
+  });
+
+  // ---------- controls ----------
+  let debounce;
+  const reloadFromFirstPage = () => { state.page = 1; load(); };
+  for (const input of [el.plate, el.cameraId]) {
+    input.addEventListener('input', () => { clearTimeout(debounce); debounce = setTimeout(reloadFromFirstPage, 350); });
+  }
+  for (const input of [el.from, el.to, el.pageSize]) input.addEventListener('change', () => { saveSettings(); reloadFromFirstPage(); });
+  el.api.addEventListener('change', () => {
+    saveSettings();
+    state.known.clear(); state.firstLoad = true;
+    el.swagger.href = `${apiBase()}/swagger`;
+    reloadFromFirstPage();
+  });
+  el.auto.addEventListener('change', () => { saveSettings(); el.auto.checked ? load() : clearTimeout(state.timer); });
+  el.interval.addEventListener('change', () => { saveSettings(); scheduleNext(); });
+  el.refresh.addEventListener('click', load);
+  el.clear.addEventListener('click', () => {
+    el.plate.value = el.cameraId.value = el.from.value = el.to.value = '';
+    reloadFromFirstPage();
+  });
+  el.prev.addEventListener('click', () => { if (state.page > 1) { state.page--; load(); } });
+  el.next.addEventListener('click', () => { state.page++; load(); });
+
+  el.swagger.href = `${apiBase()}/swagger`;
+  load();
+})();
+</script>
+</body>
+</html>
