@@ -1,0 +1,8 @@
+{
+  "event": "plate_recognized",
+  "timestamp": "2026-10-05T14:23:07.512",
+  "date": { "year": "2026", "month": "10", "day": "05", "hour": "14", "minute": "23", "second": "07", "millisecond": "512" },
+  "server": { "name": "LPR-Server-1", "domain_name": "lpr.local" },
+  "camera": { "name": "Gate Entrance", "number": 1, "index": 0, "id": "cam-001" },
+  "plate": { "text": "123ABC02", "direction": "in", "description": "", "list": { "name": "Whitelist", "description": "Employees" } }
+}

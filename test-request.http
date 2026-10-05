@@ -1,0 +1,47 @@
+@host = http://localhost:5080
+@apiKey = change-me
+
+### Send the sample plate_recognized event
+POST {{host}}/api/events/plate
+Content-Type: application/json
+X-Api-Key: {{apiKey}}
+
+{
+  "event": "plate_recognized",
+  "timestamp": "2026-10-05T14:23:07.512",
+  "date": { "year": "2026", "month": "10", "day": "05", "hour": "14", "minute": "23", "second": "07", "millisecond": "512" },
+  "server": { "name": "LPR-Server-1", "domain_name": "lpr.local" },
+  "camera": { "name": "Gate Entrance", "number": 1, "index": 0, "id": "cam-001" },
+  "plate": { "text": "123ABC02", "direction": "in", "description": "", "list": { "name": "Whitelist", "description": "Employees" } }
+}
+
+### Lenient input: numbers as strings, empty camera.number, 2-digit milliseconds
+POST {{host}}/api/events/plate
+Content-Type: application/json
+X-Api-Key: {{apiKey}}
+
+{
+  "event": "plate_recognized",
+  "timestamp": "2026-10-05T14:25:01.51",
+  "camera": { "name": "Gate Exit", "number": "", "index": "1", "id": "cam-002" },
+  "plate": { "text": "777XYZ01", "direction": "out" }
+}
+
+### Missing plate.text -> 400
+POST {{host}}/api/events/plate
+Content-Type: application/json
+X-Api-Key: {{apiKey}}
+
+{ "event": "plate_recognized", "plate": { "direction": "in" } }
+
+### List events (newest first)
+GET {{host}}/api/events?page=1&pageSize=20
+
+### Filter by plate, camera and receive time (UTC)
+GET {{host}}/api/events?plate=123ABC&cameraId=cam-001&from=2026-10-05T00:00:00Z&to=2026-10-06T00:00:00Z
+
+### Get one event (paste an id from the list)
+GET {{host}}/api/events/00000000-0000-0000-0000-000000000000
+
+### Health
+GET {{host}}/health
