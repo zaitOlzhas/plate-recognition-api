@@ -1,6 +1,8 @@
 using LprWebhook.Api;
+using LprWebhook.Api.Configuration;
 using LprWebhook.Api.Data;
 using LprWebhook.Api.Endpoints;
+using LprWebhook.Api.Services;
 using Microsoft.EntityFrameworkCore;
 
 // Used by the Docker HEALTHCHECK: the runtime image has no curl/wget.
@@ -8,6 +10,24 @@ if (args.Contains("--healthcheck"))
     return await HealthProbe.RunAsync();
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Telegram Bot Configuration
+builder.Services.Configure<TelegramBotOptions>(
+    builder.Configuration.GetSection("TelegramBot"));
+
+var telegramOptions = builder.Configuration
+    .GetSection("TelegramBot")
+    .Get<TelegramBotOptions>();
+
+if (telegramOptions?.Enabled == true)
+{
+    builder.Services.AddHttpClient<IRelayService, RelayService>(client =>
+    {
+        client.Timeout = TimeSpan.FromSeconds(10);
+    });
+
+    builder.Services.AddHostedService<TelegramBotService>();
+}
 
 var connectionString = builder.Configuration.GetConnectionString("Default") ?? "Data Source=events.db";
 builder.Services.AddDbContext<EventsDbContext>(o => o.UseSqlite(connectionString));

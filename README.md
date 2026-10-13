@@ -38,6 +38,59 @@ API_KEY=change-me
 SWAGGER_ENABLED=true
 ```
 
+### Telegram Bot
+
+The application includes an optional Telegram bot that can trigger a relay device (for example, to open a gate).
+
+#### Setup
+
+1. Create a bot with [@BotFather](https://t.me/botfather) on Telegram
+2. Copy the bot token provided by BotFather
+3. Configure the environment variables (see below)
+4. Start the application with `docker compose up -d --build`
+5. Find your bot on Telegram and send `/open_gate`
+
+#### Configuration
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `TelegramBot__Enabled` | `false` | Turns the bot on. Compose reads it from `TELEGRAM_BOT_ENABLED`. |
+| `TelegramBot__BotToken` | *(empty)* | Bot token from @BotFather. If it's empty, the bot doesn't start and a warning is logged. Compose reads it from `TELEGRAM_BOT_TOKEN`. |
+| `TelegramBot__Relay__BaseUrl` | `http://192.168.1.10` | Base URL of the relay device. Compose reads it from `RELAY_BASE_URL`. |
+| `TelegramBot__Relay__Endpoint` | `out1_pulse` | Path on the relay that `/open_gate` sends a `POST` to. Compose reads it from `RELAY_ENDPOINT`. |
+
+For compose, add to your `.env` file (never commit it — it's in `.gitignore` and `.dockerignore`):
+
+```env
+TELEGRAM_BOT_ENABLED=true
+TELEGRAM_BOT_TOKEN=1234567890:ABCdefGHIjklMNOpqrsTUVwxyz
+RELAY_BASE_URL=http://192.168.1.10
+RELAY_ENDPOINT=out1_pulse
+```
+
+#### Commands
+
+- `/open_gate` - Triggers the configured relay endpoint (e.g., opens a gate)
+
+The bot will respond with a success or error message based on the relay's response.
+
+#### Expected Relay Response
+
+The relay endpoint should respond with HTTP 200 and JSON body:
+
+```json
+{
+  "status": "ok",
+  "message": "out1_pulse"
+}
+```
+
+If the relay returns this response, the bot will confirm success to the user. Any other response or error will result in an error message.
+
+#### Access Control
+
+Currently, anyone who knows the bot can trigger the relay. For production use, consider restricting access by adding user ID whitelisting in a future enhancement.
+
 ## Send a test event
 
 ```sh
@@ -125,11 +178,13 @@ Returns `Healthy` if the app can reach the database. The container's `HEALTHCHEC
 
 ```
 src/LprWebhook.Api/
-  Program.cs                 startup: SQLite, health checks, OpenAPI/Swagger UI
+  Program.cs                 startup: SQLite, health checks, OpenAPI/Swagger UI, Telegram bot
   Contracts/                 request/response records
   Parsing/                   lenient JSON parsing and camera timestamp parsing
   Data/                      PlateEvent entity, EventsDbContext, EnsureCreated at startup
   Endpoints/EventEndpoints.cs
+  Configuration/             TelegramBotOptions (bound from the "TelegramBot" section)
+  Services/                  TelegramBotService (long polling, /open_gate) and RelayService (POST to the relay)
 tests/LprWebhook.Api.Tests/  xUnit tests for deserialization and timestamps
 ```
 
