@@ -46,9 +46,10 @@ The application includes an optional Telegram bot that can trigger a relay devic
 
 1. Create a bot with [@BotFather](https://t.me/botfather) on Telegram
 2. Copy the bot token provided by BotFather
-3. Configure the environment variables (see below)
+3. Configure the environment variables (see below). Set `TELEGRAM_OWNER_ID` to your own Telegram user ID: if you don't
+   know it, start the bot without it and send `/help`, which replies with your ID.
 4. Start the application with `docker compose up -d --build`
-5. Find your bot on Telegram and send `/open_gate`
+5. Find your bot on Telegram and send `/open_gate`. Then give other people access (see [Access control](#access-control)).
 
 #### Configuration
 
@@ -56,6 +57,8 @@ The application includes an optional Telegram bot that can trigger a relay devic
 |---|---|---|
 | `TelegramBot__Enabled` | `false` | Turns the bot on. Compose reads it from `TELEGRAM_BOT_ENABLED`. |
 | `TelegramBot__BotToken` | *(empty)* | Bot token from @BotFather. If it's empty, the bot doesn't start and a warning is logged. Compose reads it from `TELEGRAM_BOT_TOKEN`. |
+| `TelegramBot__OwnerUserId` | *(empty)* | Telegram user ID of the owner, the first admin. **Without it nobody can run commands.** Compose reads it from `TELEGRAM_OWNER_ID`. |
+| `TelegramBot__WebBaseUrl` | *(empty)* | How admins' browsers reach this API, e.g. `http://192.168.1.50:5080`. `/weblogin` uses it to send a clickable link; if it's empty, the bot sends a code to paste into the Access tab instead. Compose reads it from `WEB_PUBLIC_URL`. |
 | `TelegramBot__Relay__BaseUrl` | `http://192.168.1.10` | Base URL of the relay device. Compose reads it from `RELAY_BASE_URL`. |
 | `TelegramBot__Relay__Endpoint` | `out1_pulse` | Path on the relay that `/open_gate` sends a `POST` to. Compose reads it from `RELAY_ENDPOINT`. |
 
@@ -64,15 +67,28 @@ For compose, add to your `.env` file (never commit it — it's in `.gitignore` a
 ```env
 TELEGRAM_BOT_ENABLED=true
 TELEGRAM_BOT_TOKEN=1234567890:ABCdefGHIjklMNOpqrsTUVwxyz
+TELEGRAM_OWNER_ID=123456789
+WEB_PUBLIC_URL=http://192.168.1.50:5080
 RELAY_BASE_URL=http://192.168.1.10
 RELAY_ENDPOINT=out1_pulse
 ```
 
 #### Commands
 
-- `/open_gate` - Triggers the configured relay endpoint (e.g., opens a gate)
+| Command | Who | What it does |
+|---|---|---|
+| `/help`, `/start` | everyone | Shows your Telegram ID, your role and the commands you can use |
+| `/open_gate` | users granted `open_gate`, admins | Triggers the configured relay endpoint (e.g. opens a gate) |
+| `/users` | admins | Lists known users with their roles and permissions |
+| `/grant <@user\|id> <permission>` | admins | Allows a command, e.g. `/grant @bob open_gate` |
+| `/revoke <@user\|id> <permission>` | admins | Removes it again |
+| `/weblogin` | admins | Private chat only. Replies with a one-time sign-in link (or code) for the web Access tab |
+| `/promote <@user\|id>` | owner | Makes someone an admin |
+| `/demote <@user\|id>` | owner | Removes admin |
 
-The bot will respond with a success or error message based on the relay's response.
+`/open_gate` replies with a success or error message based on the relay's response. Users who aren't allowed get
+"Not allowed. Your Telegram ID is N — send it to an admin", and the attempt is logged with outcome `denied`.
+Commands sent in a group as `/open_gate@YourBot` work the same way.
 
 #### Expected Relay Response
 
@@ -95,15 +111,43 @@ Every text message the bot receives is stored in the `bot_commands` table and lo
 - `receivedAtUtc` (when the API got the message) and `sentAtUtc` (when Telegram says the user sent it)
 - `chatId`, `chatType`, `userId`, `username`, `userFullName`, `messageId`
 - `text` (the full message) and `command` (lower-cased, without `@botname`, e.g. `/open_gate`; `null` for plain text)
-- `outcome`: `success`, `failed` (the relay said no or was unreachable), `error` (unexpected exception) or `ignored`
-  (not a known command)
+- `outcome`: `success`, `failed` (the relay said no or was unreachable, or the command had bad arguments), `error`
+  (unexpected exception), `denied` (the user isn't allowed to run it) or `ignored` (plain text or an unknown command)
 - `resultMessage`, `relayStatusCode`, `durationMs`
 
 If saving a row fails, the error is logged and the bot carries on.
 
-#### Access Control
+#### Access control
 
-Currently, anyone who knows the bot can trigger the relay. For production use, consider restricting access by adding user ID whitelisting in a future enhancement.
+Nobody can run a command unless they've been given it.
+
+| Role | Who | Can |
+|---|---|---|
+| owner | `TELEGRAM_OWNER_ID`, from config only | Everything. Promotes and demotes admins. Can't be demoted. |
+| admin | promoted by the owner | Every command. Grants and revokes commands for regular users. Signs in to the web Access tab. |
+| user | anyone who messaged the bot, or was added by ID | Only the commands granted to them |
+
+Admins can't change other admins; only the owner can. Every check reads the database, so a revoke or demotion takes
+effect immediately, including for an open web session.
+
+**Finding people:** `@username` only works for people who have messaged the bot at least once, because Telegram doesn't
+let bots look up usernames. Otherwise ask them to send `/help` to the bot, which tells them their numeric ID, and
+use that.
+
+**Audit trail:** every grant, revoke, promote, demote and add-user is stored in the `permission_audit` table. Refused
+attempts are stored too. Each row has who did it, to whom, what, when, whether it came from `telegram` or `web`, and
+the result (`ok`, `denied` or `invalid`).
+
+**Web Access tab:** open `http://<host>:5080/#access`.
+1. Send `/weblogin` to the bot in a private chat.
+2. Open the link it sends, or paste the code into the tab. Each link or code works once and expires after 5 minutes.
+3. You're signed in with a cookie for 12 hours (sliding).
+
+The tab lists users with a checkbox per command, has Make admin / Demote buttons (owner only), lets you add a user by
+Telegram ID, and shows the audit trail. The cookie's encryption keys are kept in `dp-keys/` next to the database (in
+Docker: the `lpr-data` volume), so sign-ins survive restarts.
+
+The read-only endpoints `/api/events` and `/api/bot-commands` still need no sign-in; see the API section.
 
 ## Send a test event
 
@@ -136,8 +180,10 @@ docker compose logs -f lpr-webhook
 ## Events viewer
 
 Open `http://<host>:5080/` in a browser. The page is `src/LprWebhook.Api/wwwroot/index.html`, a single file with no
-external dependencies, and it is read-only. It has two tabs: **Plate events** and **Bot commands** (`/#bot` opens the
-second one directly). The API, date range, page size and auto-refresh are shared; each tab keeps its own filters and page.
+external dependencies. It has three tabs: **Plate events**, **Bot commands** (`/#bot`) and **Access** (`/#access`).
+The first two are read-only and share the API, date range, page size and auto-refresh; each keeps its own filters and
+page. The Access tab is for admins only (see [Access control](#access-control)) and only works when the page is opened
+from the API, not from disk.
 
 - **Table:** received time (in your local time), camera time, plate, direction, list, camera and server, newest first.
 - **Filters:** plate (matches any part), camera ID, received from/to, and page size, with pagination.
@@ -192,8 +238,27 @@ Returns messages received by the Telegram bot, newest first, as `{ page, pageSiz
 - `user` is a numeric Telegram user ID (exact match), or text matched against any part of the username or full name.
   A leading `@` is ignored.
 - `command` is the command with or without the leading `/` (for example `open_gate`).
-- `outcome` is one of `success`, `failed`, `error` or `ignored`.
+- `outcome` is one of `success`, `failed`, `error`, `denied` or `ignored`.
 - `from`, `to` and `pageSize` work the same way as on `/api/events`.
+
+### Access (admins only)
+
+Sign-in: `GET /login?code=` (the `/weblogin` link: sets the `lpr_admin` cookie and redirects to `/#access`),
+`POST /api/auth/login {"code":"..."}`, `GET /api/auth/me`, `POST /api/auth/logout`.
+
+Everything under `/api/access` needs that cookie, and the user must still be an admin; otherwise it returns 401 or 403.
+
+| Endpoint | Does |
+|---|---|
+| `GET /api/access/permissions` | Commands that can be granted |
+| `GET /api/access/users` | Users with role and permissions |
+| `POST /api/access/users {"userId":123}` | Add a user by Telegram ID |
+| `PUT` / `DELETE /api/access/users/{id}/permissions/{permission}` | Grant / revoke |
+| `PUT /api/access/users/{id}/role {"role":"admin"\|"user"}` | Promote / demote (owner only) |
+| `GET /api/access/audit?page=&pageSize=` | Permission changes, newest first |
+
+Changes return `200 {"status":"ok","message":"..."}`, `403` with `"denied"` if you aren't allowed, or `400` with
+`"invalid"` for bad input (e.g. an unknown permission).
 
 ### `GET /health`
 Returns `Healthy` if the app can reach the database. The container's `HEALTHCHECK` calls it through
@@ -206,11 +271,13 @@ src/LprWebhook.Api/
   Program.cs                 startup: SQLite, health checks, OpenAPI/Swagger UI, Telegram bot
   Contracts/                 request/response records
   Parsing/                   lenient JSON parsing and camera timestamp parsing
-  Data/                      PlateEvent and BotCommandLog entities, EventsDbContext, schema setup at startup
-  Endpoints/                 EventEndpoints.cs, BotCommandEndpoints.cs
+  Data/                      entities (plate events, bot commands, users/permissions/audit), EventsDbContext, schema setup
+  Endpoints/                 events, bot commands, auth (/weblogin sign-in) and access (admin API)
+  Access/                    AccessService (all role/permission rules + audit), BotPermissions catalog, LoginCodeStore
   Configuration/             TelegramBotOptions (bound from the "TelegramBot" section)
-  Services/                  TelegramBotService (long polling, /open_gate) and RelayService (POST to the relay)
-tests/LprWebhook.Api.Tests/  xUnit tests for deserialization and timestamps
+  Services/                  TelegramBotService (long polling, logging), BotCommandHandler (one method per command),
+                             RelayService (POST to the relay)
+tests/LprWebhook.Api.Tests/  xUnit tests: parsing, timestamps, AccessService rules, sign-in + admin API end to end
 ```
 
 Run the tests (no local SDK needed):

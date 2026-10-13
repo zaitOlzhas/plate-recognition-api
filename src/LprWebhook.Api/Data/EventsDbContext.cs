@@ -7,6 +7,9 @@ public class EventsDbContext(DbContextOptions<EventsDbContext> options) : DbCont
 {
     public DbSet<PlateEvent> PlateEvents => Set<PlateEvent>();
     public DbSet<BotCommandLog> BotCommands => Set<BotCommandLog>();
+    public DbSet<BotUser> BotUsers => Set<BotUser>();
+    public DbSet<UserPermission> UserPermissions => Set<UserPermission>();
+    public DbSet<PermissionAudit> PermissionAudit => Set<PermissionAudit>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -34,6 +37,31 @@ public class EventsDbContext(DbContextOptions<EventsDbContext> options) : DbCont
         c.HasIndex(x => x.ReceivedAtUtc);
         c.HasIndex(x => x.UserId);
         c.HasIndex(x => x.Command);
+
+        var u = modelBuilder.Entity<BotUser>();
+        u.ToTable("bot_users");
+        u.HasKey(x => x.UserId);
+        // Telegram assigns the ID; without this EF would treat the long key as auto-increment.
+        u.Property(x => x.UserId).ValueGeneratedNever();
+        u.Property(x => x.Role).IsRequired();
+        u.Property(x => x.CreatedAtUtc).HasConversion(v => v, v => DateTime.SpecifyKind(v, DateTimeKind.Utc));
+        u.Property(x => x.LastSeenAtUtc).HasConversion(
+            v => v, v => v.HasValue ? DateTime.SpecifyKind(v.Value, DateTimeKind.Utc) : null);
+        u.HasIndex(x => x.Username);
+
+        var p = modelBuilder.Entity<UserPermission>();
+        p.ToTable("user_permissions");
+        p.HasKey(x => new { x.UserId, x.Permission });
+        p.Property(x => x.GrantedAtUtc).HasConversion(v => v, v => DateTime.SpecifyKind(v, DateTimeKind.Utc));
+
+        var a = modelBuilder.Entity<PermissionAudit>();
+        a.ToTable("permission_audit");
+        a.HasKey(x => x.Id);
+        a.Property(x => x.Action).IsRequired();
+        a.Property(x => x.Source).IsRequired();
+        a.Property(x => x.Result).IsRequired();
+        a.Property(x => x.AtUtc).HasConversion(v => v, v => DateTime.SpecifyKind(v, DateTimeKind.Utc));
+        a.HasIndex(x => x.AtUtc);
     }
 }
 

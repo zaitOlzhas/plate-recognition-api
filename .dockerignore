@@ -17,3 +17,4 @@ docker-compose*.yml
 .dockerignore
 README.md
 *.http
+**/dp-keys/

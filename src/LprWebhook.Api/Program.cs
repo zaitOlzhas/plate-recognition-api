@@ -1,8 +1,12 @@
 using LprWebhook.Api;
+using LprWebhook.Api.Access;
 using LprWebhook.Api.Configuration;
 using LprWebhook.Api.Data;
 using LprWebhook.Api.Endpoints;
 using LprWebhook.Api.Services;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 
 // Used by the Docker HEALTHCHECK: the runtime image has no curl/wget.
@@ -26,11 +30,37 @@ if (telegramOptions?.Enabled == true)
         client.Timeout = TimeSpan.FromSeconds(10);
     });
 
+    builder.Services.AddScoped<BotCommandHandler>();
     builder.Services.AddHostedService<TelegramBotService>();
 }
 
 var connectionString = builder.Configuration.GetConnectionString("Default") ?? "Data Source=events.db";
 builder.Services.AddDbContext<EventsDbContext>(o => o.UseSqlite(connectionString));
+
+// Access control: roles/permissions (AccessService) and the admin web sign-in (/weblogin code -> cookie).
+builder.Services.AddScoped<AccessService>();
+builder.Services.AddMemoryCache();
+builder.Services.AddSingleton<LoginCodeStore>();
+// Cookie encryption keys live next to the database (in Docker: the /data volume) so sign-ins survive restarts.
+var dbDirectory = Path.GetDirectoryName(Path.GetFullPath(new SqliteConnectionStringBuilder(connectionString).DataSource))!;
+builder.Services.AddDataProtection()
+    .SetApplicationName("LprWebhook")
+    .PersistKeysToFileSystem(new DirectoryInfo(Path.Combine(dbDirectory, "dp-keys")));
+builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
+    .AddCookie(o =>
+    {
+        o.Cookie.Name = "lpr_admin";
+        o.Cookie.HttpOnly = true;
+        // Strict: the cookie is never sent on cross-site requests, which is the CSRF protection for the admin API.
+        o.Cookie.SameSite = SameSiteMode.Strict;
+        o.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+        o.ExpireTimeSpan = TimeSpan.FromHours(12);
+        o.SlidingExpiration = true;
+        // API, not a site with a login page: answer 401/403 instead of redirecting.
+        o.Events.OnRedirectToLogin = ctx => { ctx.Response.StatusCode = StatusCodes.Status401Unauthorized; return Task.CompletedTask; };
+        o.Events.OnRedirectToAccessDenied = ctx => { ctx.Response.StatusCode = StatusCodes.Status403Forbidden; return Task.CompletedTask; };
+    });
+builder.Services.AddAuthorization();
 builder.Services.AddHealthChecks().AddDbContextCheck<EventsDbContext>();
 builder.Services.AddOpenApi();
 
@@ -69,9 +99,17 @@ if (app.Configuration.GetValue("Swagger:Enabled", true))
     });
 }
 
+app.UseAuthentication();
+app.UseAuthorization();
+
 app.MapHealthChecks("/health");
 app.MapEventEndpoints();
 app.MapBotCommandEndpoints();
+app.MapAuthEndpoints();
+app.MapAccessEndpoints();
 
 await app.RunAsync();
 return 0;
+
+// Lets WebApplicationFactory<Program> in the tests start the real app.
+public partial class Program;

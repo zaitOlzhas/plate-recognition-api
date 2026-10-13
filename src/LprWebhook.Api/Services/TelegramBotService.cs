@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using LprWebhook.Api.Access;
 using LprWebhook.Api.Data;
 using Telegram.Bot;
 using Telegram.Bot.Polling;
@@ -58,8 +59,35 @@ public class TelegramBotService : IHostedService
             receiverOptions,
             _cts.Token);
 
+        if (_options.OwnerUserId is not > 0)
+        {
+            _logger.LogWarning(
+                "TelegramBot:OwnerUserId is not set: nobody is an admin, so nobody can run commands or grant access. " +
+                "Set TELEGRAM_OWNER_ID to your Telegram user ID (send /help to the bot to see it)");
+        }
+
+        _ = SetCommandMenuAsync(_botClient, _cts.Token);
+
         _logger.LogInformation("Telegram bot started successfully");
         return Task.CompletedTask;
+    }
+
+    /// <summary>The "/" menu in Telegram clients. Admin commands are listed by /help for admins only.</summary>
+    private async Task SetCommandMenuAsync(ITelegramBotClient botClient, CancellationToken ct)
+    {
+        try
+        {
+            BotCommand[] commands =
+            [
+                .. BotPermissions.All.Select(p => new BotCommand { Command = p.Key, Description = p.Description }),
+                new BotCommand { Command = "help", Description = "Your ID, role and available commands" },
+            ];
+            await botClient.SetMyCommands(commands, cancellationToken: ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not set the Telegram command menu");
+        }
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)
@@ -110,9 +138,36 @@ public class TelegramBotService : IHostedService
         // Create a scope to resolve scoped services
         using var scope = _serviceProvider.CreateScope();
 
-        if (record.Command == "/open_gate")
+        try
         {
-            await HandleOpenGateCommandAsync(botClient, scope.ServiceProvider, record, ct);
+            if (message.From is { } from)
+            {
+                await scope.ServiceProvider.GetRequiredService<AccessService>()
+                    .TouchUserAsync(from.Id, from.Username, record.UserFullName, ct);
+            }
+
+            await scope.ServiceProvider.GetRequiredService<BotCommandHandler>()
+                .HandleAsync(botClient, message, record, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error handling {Command} from {Username}", record.Command, username);
+            // Keep the outcome if the command already ran and only the Telegram reply failed.
+            if (record.Outcome == "ignored")
+                record.Outcome = "error";
+            record.ResultMessage = record.ResultMessage is null ? ex.Message : $"{record.ResultMessage} (reply failed: {ex.Message})";
+
+            try
+            {
+                await botClient.SendMessage(
+                    chatId,
+                    "An unexpected error occurred. Please try again later.",
+                    cancellationToken: ct);
+            }
+            catch
+            {
+                // Ignore errors when sending error message
+            }
         }
 
         record.DurationMs = (int)stopwatch.ElapsedMilliseconds;
@@ -148,74 +203,6 @@ public class TelegramBotService : IHostedService
         {
             _logger.LogError(ex, "Failed to store bot command from {Username} (ChatId={ChatId}): {Text}",
                 record.Username, record.ChatId, record.Text);
-        }
-    }
-
-    private async Task HandleOpenGateCommandAsync(
-        ITelegramBotClient botClient,
-        IServiceProvider services,
-        BotCommandLog record,
-        CancellationToken ct)
-    {
-        var chatId = record.ChatId;
-        var username = record.Username ?? "unknown";
-
-        _logger.LogInformation(
-            "Processing /open_gate command from {Username} (ChatId={ChatId})",
-            username, chatId);
-
-        var relayService = services.GetRequiredService<IRelayService>();
-
-        try
-        {
-            // Send "typing" indicator
-            await botClient.SendChatAction(chatId, ChatAction.Typing, cancellationToken: ct);
-
-            var result = await relayService.TriggerRelayAsync(ct);
-            record.Outcome = result.Success ? "success" : "failed";
-            record.ResultMessage = result.Message;
-            record.RelayStatusCode = result.StatusCode == 0 ? null : result.StatusCode;
-
-            string responseMessage;
-            if (result.Success)
-            {
-                responseMessage = $"Gate opened successfully!\n\n{result.Message}";
-                _logger.LogInformation(
-                    "Gate opened successfully for {Username}",
-                    username);
-            }
-            else
-            {
-                responseMessage = $"Failed to open gate\n\n{result.Message}";
-                _logger.LogWarning(
-                    "Failed to open gate for {Username}: {Error}",
-                    username, result.Message);
-            }
-
-            await botClient.SendMessage(
-                chatId,
-                responseMessage,
-                cancellationToken: ct);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error handling /open_gate command");
-            // Keep "success"/"failed" if the relay already answered and only the Telegram reply failed.
-            if (record.Outcome == "ignored")
-                record.Outcome = "error";
-            record.ResultMessage = record.ResultMessage is null ? ex.Message : $"{record.ResultMessage} (reply failed: {ex.Message})";
-
-            try
-            {
-                await botClient.SendMessage(
-                    chatId,
-                    "An unexpected error occurred. Please try again later.",
-                    cancellationToken: ct);
-            }
-            catch
-            {
-                // Ignore errors when sending error message
-            }
         }
     }
 

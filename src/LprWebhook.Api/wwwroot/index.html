@@ -70,6 +70,18 @@
   .badge.ok { color: var(--in); background: var(--in-bg); }
   .badge.bad { color: var(--err); background: var(--err-bg); }
   .clip { max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
+  .pad { padding: 16px; }
+  .pad-x { padding: 0 12px 10px; margin: 8px 0 0; font-size: 13px; }
+  .pad h2, h2.section { font-size: 16px; margin: 0 0 8px; }
+  h2.section { margin: 20px 0 8px; }
+  .row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; margin: 0; }
+  td input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; }
+  td input[type="checkbox"]:disabled { cursor: default; }
+  td.center, th.center { text-align: center; }
+  tbody.static tr { cursor: default; }
+  tbody.static tr:hover { background: transparent; }
+  .badge.owner { color: var(--accent-text); background: var(--accent); }
+  .badge.admin { color: var(--accent); background: var(--hover); border: 1px solid var(--accent); }
 
   .tabs { display: flex; gap: 4px; margin-bottom: 12px; border-bottom: 1px solid var(--border); overflow-x: auto; }
   .tabs button { border: none; border-bottom: 2px solid transparent; border-radius: 6px 6px 0 0; background: none;
@@ -111,9 +123,10 @@
   <nav class="tabs" role="tablist">
     <button type="button" role="tab" data-tab="events" aria-selected="true">Plate events</button>
     <button type="button" role="tab" data-tab="bot" aria-selected="false">Bot commands</button>
+    <button type="button" role="tab" data-tab="access" aria-selected="false">Access</button>
   </nav>
 
-  <div class="panel toolbar">
+  <div class="panel toolbar" data-view="events bot">
     <label class="field">API
       <input id="api" type="text" spellcheck="false" style="width: 200px">
     </label>
@@ -131,7 +144,7 @@
     </label>
     <label class="field" data-view="bot" hidden>Outcome
       <select id="outcome">
-        <option value="">Any</option><option>success</option><option>failed</option><option>error</option><option>ignored</option>
+        <option value="">Any</option><option>success</option><option>failed</option><option>error</option><option>denied</option><option>ignored</option>
       </select>
     </label>
     <label class="field">Received from (local time)
@@ -154,7 +167,7 @@
 
   <div id="error" class="error" role="alert"></div>
 
-  <div class="panel">
+  <div class="panel" data-view="events bot">
     <div class="table-wrap" data-view="events">
       <table>
         <thead>
@@ -185,6 +198,60 @@
       <a id="swagger" href="/swagger" target="_blank" rel="noopener">Swagger UI</a>
     </div>
   </div>
+
+  <section data-view="access" hidden>
+    <div id="accessSignedOut" class="panel pad" hidden>
+      <h2>Sign in</h2>
+      <p class="muted">Only bot admins can manage access. Send <span class="mono">/weblogin</span> to the bot in a private chat:
+        it replies with a one-time link, or a code to paste here. Codes expire after 5 minutes.</p>
+      <form id="loginForm" class="row">
+        <input id="loginCode" type="text" placeholder="Code from /weblogin" spellcheck="false" autocomplete="off" style="width: 360px">
+        <button type="submit" class="primary">Sign in</button>
+      </form>
+      <p id="fileNote" class="muted" hidden>This page was opened as a file. Signing in only works when the page is opened from the API (<span class="mono">http://&lt;host&gt;:5080/#access</span>).</p>
+    </div>
+
+    <div id="accessSignedIn" hidden>
+      <div class="panel toolbar">
+        <span>Signed in as <strong id="meName"></strong> <span id="meRole" class="badge"></span></span>
+        <span class="spacer"></span>
+        <form id="addUserForm" class="row">
+          <label class="field">Add user by Telegram ID
+            <input id="addUserId" type="text" inputmode="numeric" placeholder="e.g. 123456789" spellcheck="false">
+          </label>
+          <button type="submit">Add user</button>
+        </form>
+        <button id="accessRefresh" type="button" class="primary">Refresh</button>
+        <button id="logout" type="button">Sign out</button>
+      </div>
+
+      <div class="panel">
+        <div class="table-wrap">
+          <table>
+            <thead><tr id="usersHead"></tr></thead>
+            <tbody id="userRows" class="static"></tbody>
+          </table>
+        </div>
+        <p class="muted pad-x">Admins and the owner can use every command. Only the owner can promote or demote admins.
+          People appear here after they message the bot, or when added by ID.</p>
+      </div>
+
+      <h2 class="section">Permission changes</h2>
+      <div class="panel">
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>When</th><th>By</th><th>Action</th><th>User</th><th>Permission</th><th>Via</th><th>Result</th><th>Detail</th></tr></thead>
+            <tbody id="auditRows" class="static"></tbody>
+          </table>
+        </div>
+        <div class="pager">
+          <button id="auditPrev" type="button">‹ Newer</button>
+          <button id="auditNext" type="button">Older ›</button>
+          <span id="auditInfo" class="muted"></span>
+        </div>
+      </div>
+    </div>
+  </section>
 </div>
 
 <dialog id="dialog">
@@ -270,7 +337,7 @@
     return badgeCell(direction, d === 'in' ? 'in' : d === 'out' ? 'out' : '');
   }
   function outcomeBadge(outcome) {
-    return badgeCell(outcome, outcome === 'success' ? 'ok' : outcome === 'failed' || outcome === 'error' ? 'bad' : '');
+    return badgeCell(outcome, outcome === 'success' ? 'ok' : outcome === 'failed' || outcome === 'error' || outcome === 'denied' ? 'bad' : '');
   }
 
   // ---------- views (one per tab) ----------
@@ -368,6 +435,7 @@
   }
 
   async function load() {
+    if (!view()) return; // the Access tab loads through loadAccess()
     clearTimeout(state.timer);
     state.controller?.abort();
     const controller = state.controller = new AbortController();
@@ -432,14 +500,21 @@
 
   // ---------- tabs ----------
   function setView(name) {
-    current = views[name] ? name : 'events';
-    for (const node of document.querySelectorAll('[data-view]')) node.hidden = node.dataset.view !== current;
+    current = views[name] || name === 'access' ? name : 'events';
+    // data-view may list several tabs, e.g. data-view="events bot".
+    for (const node of document.querySelectorAll('[data-view]')) node.hidden = !node.dataset.view.split(' ').includes(current);
     for (const tab of document.querySelectorAll('[data-tab]')) tab.setAttribute('aria-selected', String(tab.dataset.tab === current));
-    document.title = view().title;
+    document.title = view()?.title ?? 'Access · LPR';
     const hash = current === 'events' ? '' : '#' + current;
     if (location.hash !== hash) history.replaceState(null, '', location.pathname + location.search + hash);
     el.pageInfo.textContent = '';
-    load();
+    showError('');
+    if (view()) { load(); return; }
+    clearTimeout(state.timer);
+    state.controller?.abort();
+    state.controller = null;
+    el.refresh.disabled = false;
+    loadAccess();
   }
   for (const tab of document.querySelectorAll('[data-tab]')) tab.addEventListener('click', () => setView(tab.dataset.tab));
   window.addEventListener('hashchange', () => setView(location.hash.slice(1)));
@@ -447,7 +522,7 @@
   // ---------- auto-refresh ----------
   function scheduleNext() {
     clearTimeout(state.timer);
-    if (!el.auto.checked || document.hidden || el.dialog.open) return;
+    if (!view() || !el.auto.checked || document.hidden || el.dialog.open) return;
     state.timer = setTimeout(load, Number(el.interval.value) * 1000);
   }
   document.addEventListener('visibilitychange', () => {
@@ -566,8 +641,229 @@
   el.prev.addEventListener('click', () => { if (view().page > 1) { view().page--; load(); } });
   el.next.addEventListener('click', () => { view().page++; load(); });
 
+  // ---------- access tab (admins only; signed in with a /weblogin code -> cookie) ----------
+  const acc = {
+    signedOut: $('accessSignedOut'), signedIn: $('accessSignedIn'), fileNote: $('fileNote'),
+    loginForm: $('loginForm'), loginCode: $('loginCode'), meName: $('meName'), meRole: $('meRole'),
+    addUserForm: $('addUserForm'), addUserId: $('addUserId'), refresh: $('accessRefresh'), logout: $('logout'),
+    usersHead: $('usersHead'), userRows: $('userRows'),
+    auditRows: $('auditRows'), auditPrev: $('auditPrev'), auditNext: $('auditNext'), auditInfo: $('auditInfo'),
+  };
+  const access = { me: null, permissions: [], auditPage: 1, busy: false };
+  const AUDIT_PAGE_SIZE = 25;
+
+  class SignedOut extends Error {}
+
+  async function accessApi(path, { method = 'GET', body } = {}) {
+    const res = await fetch(`${apiBase()}${path}`, {
+      method, cache: 'no-store', credentials: 'same-origin',
+      headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    // 401: no/expired cookie. 403 on a read: no longer an admin. (403 on a change is a refused action, shown as an error.)
+    if (res.status === 401 || (res.status === 403 && method === 'GET')) throw new SignedOut();
+    const text = await res.text();
+    let data = null;
+    try { data = text ? JSON.parse(text) : null; } catch { /* not JSON */ }
+    if (!res.ok) throw new Error(data?.message || data?.error || `HTTP ${res.status}`);
+    return data;
+  }
+
+  function showSignedOut() {
+    access.me = null;
+    acc.signedIn.hidden = true;
+    acc.signedOut.hidden = false;
+    acc.fileNote.hidden = servedByApi;
+  }
+
+  async function loadAccess() {
+    try {
+      access.me = await accessApi('/api/auth/me');
+    } catch (err) {
+      if (err instanceof SignedOut) { showSignedOut(); return; }
+      showError(err instanceof TypeError ? networkHint(err) : err.message);
+      return;
+    } finally {
+      checkHealth();
+    }
+    acc.signedOut.hidden = true;
+    acc.signedIn.hidden = false;
+    acc.meName.textContent = access.me.name;
+    acc.meRole.textContent = access.me.role;
+    acc.meRole.className = 'badge ' + access.me.role;
+    await refreshAccess();
+  }
+
+  async function refreshAccess() {
+    try {
+      const [permissions, users, audit] = await Promise.all([
+        accessApi('/api/access/permissions'),
+        accessApi('/api/access/users'),
+        accessApi(`/api/access/audit?page=${access.auditPage}&pageSize=${AUDIT_PAGE_SIZE}`),
+      ]);
+      access.permissions = permissions;
+      renderUsers(users);
+      renderAudit(audit);
+      showError('');
+      el.updated.textContent = `Updated ${new Date().toLocaleTimeString()}`;
+    } catch (err) {
+      if (err instanceof SignedOut) { showSignedOut(); showError('Your session ended or you are no longer an admin. Sign in again with /weblogin.'); return; }
+      showError(err instanceof TypeError ? networkHint(err) : err.message);
+    }
+  }
+
+  function th(text, className) {
+    const cell = document.createElement('th');
+    cell.textContent = text;
+    if (className) cell.className = className;
+    return cell;
+  }
+
+  function renderUsers(users) {
+    acc.usersHead.replaceChildren(
+      th('User'), th('Telegram ID'), th('Role'),
+      ...access.permissions.map(p => { const c = th(p.command, 'center'); c.title = p.description; return c; }),
+      th('Last seen'), th(''));
+
+    const isOwner = access.me.role === 'owner';
+    const fragment = document.createDocumentFragment();
+    for (const u of users) {
+      const tr = document.createElement('tr');
+      const name = u.username ? '@' + u.username : (u.fullName || '(never messaged the bot)');
+      const elevated = u.role === 'owner' || u.role === 'admin';
+
+      const permCells = access.permissions.map(p => {
+        const cell = document.createElement('td');
+        cell.className = 'center';
+        const box = document.createElement('input');
+        box.type = 'checkbox';
+        box.checked = u.permissions.includes(p.key);
+        box.disabled = elevated;
+        box.title = elevated ? 'Admins can use every command' : `${box.checked ? 'Revoke' : 'Grant'} ${p.command}`;
+        box.setAttribute('aria-label', `${p.command} for ${name}`);
+        box.addEventListener('change', () => runAction(
+          box.checked ? 'PUT' : 'DELETE',
+          `/api/access/users/${u.userId}/permissions/${encodeURIComponent(p.key)}`,
+          undefined, () => { box.checked = !box.checked; }));
+        cell.appendChild(box);
+        return cell;
+      });
+
+      const actions = document.createElement('td');
+      if (isOwner && u.role !== 'owner') {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = u.role === 'admin' ? 'Demote' : 'Make admin';
+        button.addEventListener('click', () => runAction('PUT', `/api/access/users/${u.userId}/role`,
+          { role: u.role === 'admin' ? 'user' : 'admin' }));
+        actions.appendChild(button);
+      }
+
+      const roleCell = badgeCell(u.role, elevated ? u.role : '');
+      tr.append(
+        td(name, null, u.fullName && u.username ? u.fullName : null),
+        td(String(u.userId), 'mono'),
+        roleCell,
+        ...permCells,
+        td(u.lastSeenAtUtc ? fmtReceived(u.lastSeenAtUtc) : '—', 'mono'),
+        actions);
+      fragment.appendChild(tr);
+    }
+    if (!users.length) {
+      const tr = document.createElement('tr');
+      const cell = td('Nobody has messaged the bot yet.', 'empty');
+      cell.colSpan = 5 + access.permissions.length;
+      tr.appendChild(cell);
+      fragment.appendChild(tr);
+    }
+    acc.userRows.replaceChildren(fragment);
+  }
+
+  function renderAudit(data) {
+    const fragment = document.createDocumentFragment();
+    for (const a of data.items) {
+      const tr = document.createElement('tr');
+      tr.append(
+        td(fmtReceived(a.atUtc), 'mono'),
+        td(a.actorName || String(a.actorUserId), null, String(a.actorUserId)),
+        td(a.action.replace('_', ' ')),
+        td(show(a.targetName), null, a.targetUserId != null ? String(a.targetUserId) : null),
+        td(show(a.permission), 'mono'),
+        td(a.source),
+        badgeCell(a.result, a.result === 'ok' ? 'ok' : 'bad'),
+        td(show(a.detail), 'clip', a.detail));
+      fragment.appendChild(tr);
+    }
+    if (!data.items.length) {
+      const tr = document.createElement('tr');
+      const cell = td('No permission changes yet.', 'empty');
+      cell.colSpan = 8;
+      tr.appendChild(cell);
+      fragment.appendChild(tr);
+    }
+    acc.auditRows.replaceChildren(fragment);
+
+    const pages = Math.max(1, Math.ceil(data.total / data.pageSize));
+    acc.auditInfo.textContent = `${data.total} change${data.total === 1 ? '' : 's'} · page ${data.page} of ${pages}`;
+    acc.auditPrev.disabled = data.page <= 1;
+    acc.auditNext.disabled = data.page >= pages;
+  }
+
+  // Runs one change, shows the server's message on failure, then reloads users and audit.
+  async function runAction(method, path, body, undo) {
+    if (access.busy) { undo?.(); return; }
+    access.busy = true;
+    try {
+      await accessApi(path, { method, body });
+      access.auditPage = 1;
+    } catch (err) {
+      undo?.();
+      if (err instanceof SignedOut) { showSignedOut(); showError('Your session ended. Sign in again with /weblogin.'); return; }
+      showError(err.message);
+      return;
+    } finally {
+      access.busy = false;
+    }
+    await refreshAccess();
+  }
+
+  acc.loginForm.addEventListener('submit', async ev => {
+    ev.preventDefault();
+    const code = acc.loginCode.value.trim();
+    if (!code) return;
+    try {
+      await accessApi('/api/auth/login', { method: 'POST', body: { code } });
+      acc.loginCode.value = '';
+      showError('');
+      await loadAccess();
+    } catch (err) {
+      showError(err instanceof SignedOut ? 'That code is wrong, already used or expired (codes last 5 minutes). Send /weblogin again.' : err.message);
+    }
+  });
+  acc.addUserForm.addEventListener('submit', ev => {
+    ev.preventDefault();
+    const id = acc.addUserId.value.trim();
+    if (!/^\d+$/.test(id)) { showError('A Telegram user ID is a number, e.g. 123456789.'); return; }
+    runAction('POST', '/api/access/users', { userId: Number(id) }).then(() => { acc.addUserId.value = ''; });
+  });
+  acc.refresh.addEventListener('click', refreshAccess);
+  acc.logout.addEventListener('click', async () => {
+    try { await accessApi('/api/auth/logout', { method: 'POST' }); } catch { /* signed out either way */ }
+    showSignedOut();
+  });
+  acc.auditPrev.addEventListener('click', () => { if (access.auditPage > 1) { access.auditPage--; refreshAccess(); } });
+  acc.auditNext.addEventListener('click', () => { access.auditPage++; refreshAccess(); });
+
   el.swagger.href = `${apiBase()}/swagger`;
   setView(location.hash.slice(1));
+
+  // /login redirects here with ?login=failed when a link was wrong, used or expired. (After setView, which clears errors.)
+  const params = new URLSearchParams(location.search);
+  if (params.get('login') === 'failed') {
+    showError('That sign-in link is wrong, already used or expired (links last 5 minutes). Send /weblogin to the bot again.');
+    params.delete('login');
+    history.replaceState(null, '', location.pathname + (params.size ? '?' + params : '') + location.hash);
+  }
 })();
 </script>
 </body>
