@@ -71,6 +71,7 @@ if (app.Configuration.GetValue("Swagger:Enabled", true))
 
 app.MapHealthChecks("/health");
 app.MapEventEndpoints();
+app.MapBotCommandEndpoints();
 
 await app.RunAsync();
 return 0;

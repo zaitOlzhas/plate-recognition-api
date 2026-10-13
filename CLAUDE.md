@@ -20,13 +20,18 @@ On Windows, Docker Desktop must be running (error mentioning `dockerDesktopLinux
 
 - `src/LprWebhook.Api/Program.cs` — startup; `--healthcheck` arg runs `HealthProbe` (runtime image has no curl).
 - `Endpoints/EventEndpoints.cs` — `POST /api/events/plate`, `GET /api/events`, `GET /api/events/{id}`.
+- `Endpoints/BotCommandEndpoints.cs` — `GET /api/bot-commands` (Telegram bot message log).
 - `Parsing/` — deliberately lenient JSON/timestamp parsing; vendor payloads can be malformed (e.g. `"number": ,`).
   Don't make it stricter without tests covering the vendor quirks listed in the README.
-- `Data/` — `PlateEvent`, `EventsDbContext`. Schema is created with `EnsureCreated()`, no migrations.
+- `Data/` — `PlateEvent`, `BotCommandLog`, `EventsDbContext`. No migrations: startup runs the EF create script with
+  `IF NOT EXISTS`, so new tables appear in existing DBs but new columns on existing tables do not.
 - `Configuration/TelegramBotOptions.cs` — bound from the `TelegramBot` config section.
 - `Services/` — `TelegramBotService` (hosted service, long polling) and `RelayService` (HTTP POST to the relay).
-  Both are registered only when `TelegramBot:Enabled` is true.
-- `wwwroot/index.html` — single-file events viewer, no external dependencies.
+  Both are registered only when `TelegramBot:Enabled` is true. Every received text message is saved to
+  `bot_commands` with its outcome; a failed save is logged and must never break the bot.
+- `wwwroot/index.html` — single-file viewer, no external dependencies. Two tabs (`Plate events`, `Bot commands`,
+  `/#bot`) driven by a `views` map in the script: each view has its endpoint, filters, row renderer and details
+  handler, plus its own page/known-ids state. Add a tab by adding a view and its `data-view` markup.
 
 ## Configuration
 
@@ -38,6 +43,7 @@ On Windows, Docker Desktop must be running (error mentioning `dockerDesktopLinux
 
 ## Gotchas
 
+- The entity is `BotCommandLog`, not `BotCommand`, because Telegram.Bot has its own `BotCommand` type.
 - Telegram.Bot is v22: APIs are `SendMessage`/`SendChatAction` (no `Async` suffix) and
   `ReceiverOptions.DropPendingUpdates` (formerly `ThrowPendingUpdates`).
 - The bot has no access control yet — anyone who finds it can trigger the relay.

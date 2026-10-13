@@ -40,3 +40,20 @@ public sealed record PlateEventDetails(
     string? ServerName,
     string? ServerDomainName,
     string RawJson);
+
+public sealed record BotCommandLogItem(
+    Guid Id,
+    DateTime ReceivedAtUtc,
+    DateTime SentAtUtc,
+    long ChatId,
+    string? ChatType,
+    long? UserId,
+    string? Username,
+    string? UserFullName,
+    int MessageId,
+    string Text,
+    string? Command,
+    string Outcome,
+    string? ResultMessage,
+    int? RelayStatusCode,
+    int DurationMs);

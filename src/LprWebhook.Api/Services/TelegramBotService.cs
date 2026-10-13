@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using LprWebhook.Api.Data;
 using Telegram.Bot;
 using Telegram.Bot.Polling;
 using Telegram.Bot.Types;
@@ -83,30 +85,86 @@ public class TelegramBotService : IHostedService
 
         var chatId = message.Chat.Id;
         var username = message.From?.Username ?? "unknown";
+        var stopwatch = Stopwatch.StartNew();
 
         _logger.LogInformation(
             "Received message from {Username} (ChatId={ChatId}): {Message}",
             username, chatId, messageText);
 
-        if (messageText.Trim().ToLowerInvariant() == "/open_gate")
+        var record = new BotCommandLog
         {
-            await HandleOpenGateCommandAsync(botClient, chatId, username, ct);
+            Id = Guid.CreateVersion7(),
+            ReceivedAtUtc = DateTime.UtcNow,
+            SentAtUtc = DateTime.SpecifyKind(message.Date, DateTimeKind.Utc),
+            ChatId = chatId,
+            ChatType = message.Chat.Type.ToString(),
+            UserId = message.From?.Id,
+            Username = message.From?.Username,
+            UserFullName = $"{message.From?.FirstName} {message.From?.LastName}".Trim() is { Length: > 0 } name ? name : null,
+            MessageId = message.MessageId,
+            Text = messageText,
+            Command = ParseCommand(messageText),
+            Outcome = "ignored",
+        };
+
+        // Create a scope to resolve scoped services
+        using var scope = _serviceProvider.CreateScope();
+
+        if (record.Command == "/open_gate")
+        {
+            await HandleOpenGateCommandAsync(botClient, scope.ServiceProvider, record, ct);
+        }
+
+        record.DurationMs = (int)stopwatch.ElapsedMilliseconds;
+        await SaveCommandAsync(scope.ServiceProvider, record);
+    }
+
+    /// <summary>"/Open_Gate@MyBot now" -> "/open_gate"; null if the text isn't a command.</summary>
+    private static string? ParseCommand(string text)
+    {
+        var trimmed = text.Trim();
+        if (!trimmed.StartsWith('/'))
+            return null;
+
+        var token = trimmed.Split(' ', 2)[0];
+        var at = token.IndexOf('@');
+        return (at > 0 ? token[..at] : token).ToLowerInvariant();
+    }
+
+    private async Task SaveCommandAsync(IServiceProvider services, BotCommandLog record)
+    {
+        try
+        {
+            var db = services.GetRequiredService<EventsDbContext>();
+            db.BotCommands.Add(record);
+            // Not tied to the bot's token: a command that already ran should still be recorded during shutdown.
+            await db.SaveChangesAsync(CancellationToken.None);
+
+            _logger.LogInformation(
+                "Bot command {CommandId}: user={Username} ({UserId}) chat={ChatId} command={Command} outcome={Outcome} durationMs={DurationMs}",
+                record.Id, record.Username, record.UserId, record.ChatId, record.Command, record.Outcome, record.DurationMs);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to store bot command from {Username} (ChatId={ChatId}): {Text}",
+                record.Username, record.ChatId, record.Text);
         }
     }
 
     private async Task HandleOpenGateCommandAsync(
         ITelegramBotClient botClient,
-        long chatId,
-        string username,
+        IServiceProvider services,
+        BotCommandLog record,
         CancellationToken ct)
     {
+        var chatId = record.ChatId;
+        var username = record.Username ?? "unknown";
+
         _logger.LogInformation(
             "Processing /open_gate command from {Username} (ChatId={ChatId})",
             username, chatId);
 
-        // Create a scope to resolve scoped services
-        using var scope = _serviceProvider.CreateScope();
-        var relayService = scope.ServiceProvider.GetRequiredService<IRelayService>();
+        var relayService = services.GetRequiredService<IRelayService>();
 
         try
         {
@@ -114,6 +172,9 @@ public class TelegramBotService : IHostedService
             await botClient.SendChatAction(chatId, ChatAction.Typing, cancellationToken: ct);
 
             var result = await relayService.TriggerRelayAsync(ct);
+            record.Outcome = result.Success ? "success" : "failed";
+            record.ResultMessage = result.Message;
+            record.RelayStatusCode = result.StatusCode == 0 ? null : result.StatusCode;
 
             string responseMessage;
             if (result.Success)
@@ -139,6 +200,10 @@ public class TelegramBotService : IHostedService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error handling /open_gate command");
+            // Keep "success"/"failed" if the relay already answered and only the Telegram reply failed.
+            if (record.Outcome == "ignored")
+                record.Outcome = "error";
+            record.ResultMessage = record.ResultMessage is null ? ex.Message : $"{record.ResultMessage} (reply failed: {ex.Message})";
 
             try
             {

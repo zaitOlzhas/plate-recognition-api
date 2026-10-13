@@ -23,6 +23,7 @@
     }
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
   .wrap { max-width: 1280px; margin: 0 auto; padding: 16px; }
   header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-bottom: 12px; }
@@ -66,6 +67,15 @@
   .badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; background: var(--hover); }
   .badge.in { color: var(--in); background: var(--in-bg); }
   .badge.out { color: var(--out); background: var(--out-bg); }
+  .badge.ok { color: var(--in); background: var(--in-bg); }
+  .badge.bad { color: var(--err); background: var(--err-bg); }
+  .clip { max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
+
+  .tabs { display: flex; gap: 4px; margin-bottom: 12px; border-bottom: 1px solid var(--border); overflow-x: auto; }
+  .tabs button { border: none; border-bottom: 2px solid transparent; border-radius: 6px 6px 0 0; background: none;
+    padding: 8px 14px; color: var(--muted); font-weight: 600; white-space: nowrap; margin-bottom: -1px; }
+  .tabs button:hover { background: var(--hover); }
+  .tabs button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
   .empty { text-align: center; color: var(--muted); padding: 32px 10px; cursor: default; }
 
   .pager { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--border); }
@@ -98,15 +108,31 @@
     <span id="updated" class="muted"></span>
   </header>
 
+  <nav class="tabs" role="tablist">
+    <button type="button" role="tab" data-tab="events" aria-selected="true">Plate events</button>
+    <button type="button" role="tab" data-tab="bot" aria-selected="false">Bot commands</button>
+  </nav>
+
   <div class="panel toolbar">
     <label class="field">API
       <input id="api" type="text" spellcheck="false" style="width: 200px">
     </label>
-    <label class="field">Plate contains
+    <label class="field" data-view="events">Plate contains
       <input id="plate" type="text" placeholder="e.g. 123ABC" spellcheck="false">
     </label>
-    <label class="field">Camera ID
+    <label class="field" data-view="events">Camera ID
       <input id="cameraId" type="text" placeholder="exact, e.g. cam-001" spellcheck="false">
+    </label>
+    <label class="field" data-view="bot" hidden>User
+      <input id="user" type="text" placeholder="username, name or ID" spellcheck="false">
+    </label>
+    <label class="field" data-view="bot" hidden>Command
+      <input id="command" type="text" placeholder="e.g. open_gate" spellcheck="false">
+    </label>
+    <label class="field" data-view="bot" hidden>Outcome
+      <select id="outcome">
+        <option value="">Any</option><option>success</option><option>failed</option><option>error</option><option>ignored</option>
+      </select>
     </label>
     <label class="field">Received from (local time)
       <input id="from" type="datetime-local" step="1">
@@ -129,7 +155,7 @@
   <div id="error" class="error" role="alert"></div>
 
   <div class="panel">
-    <div class="table-wrap">
+    <div class="table-wrap" data-view="events">
       <table>
         <thead>
           <tr>
@@ -138,6 +164,17 @@
           </tr>
         </thead>
         <tbody id="rows"><tr><td class="empty" colspan="8">Loading…</td></tr></tbody>
+      </table>
+    </div>
+    <div class="table-wrap" data-view="bot" hidden>
+      <table>
+        <thead>
+          <tr>
+            <th>Received</th><th>User</th><th>Chat ID</th><th>Message</th>
+            <th>Outcome</th><th>Result</th><th>Duration</th>
+          </tr>
+        </thead>
+        <tbody id="botRows"><tr><td class="empty" colspan="7">Loading…</td></tr></tbody>
       </table>
     </div>
     <div class="pager">
@@ -158,7 +195,7 @@
   </div>
   <div class="dlg-body">
     <dl id="dlgFields"></dl>
-    <div class="raw-head"><strong>Raw JSON (as received)</strong><button id="copyRaw" type="button">Copy</button></div>
+    <div class="raw-head"><strong id="rawLabel">Raw JSON (as received)</strong><button id="copyRaw" type="button">Copy</button></div>
     <pre id="dlgRaw"></pre>
   </div>
 </dialog>
@@ -167,17 +204,18 @@
 (() => {
   const $ = id => document.getElementById(id);
   const el = {
-    api: $('api'), plate: $('plate'), cameraId: $('cameraId'), from: $('from'), to: $('to'),
+    api: $('api'), from: $('from'), to: $('to'),
     pageSize: $('pageSize'), auto: $('auto'), interval: $('interval'), refresh: $('refresh'), clear: $('clear'),
-    rows: $('rows'), prev: $('prev'), next: $('next'), pageInfo: $('pageInfo'), updated: $('updated'),
+    prev: $('prev'), next: $('next'), pageInfo: $('pageInfo'), updated: $('updated'),
     error: $('error'), healthDot: $('healthDot'), healthText: $('healthText'), swagger: $('swagger'),
     dialog: $('dialog'), dlgTitle: $('dlgTitle'), dlgFields: $('dlgFields'), dlgRaw: $('dlgRaw'),
-    dlgClose: $('dlgClose'), copyRaw: $('copyRaw'),
+    dlgClose: $('dlgClose'), copyRaw: $('copyRaw'), rawLabel: $('rawLabel'),
+    plate: $('plate'), cameraId: $('cameraId'), user: $('user'), command: $('command'), outcome: $('outcome'),
   };
 
   const servedByApi = location.protocol === 'http:' || location.protocol === 'https:';
   const STORAGE_KEY = 'lpr-events-ui';
-  const state = { page: 1, total: 0, known: new Set(), firstLoad: true, timer: null, controller: null };
+  const state = { timer: null, controller: null };
 
   // ---------- settings (per-browser convenience only) ----------
   function loadSettings() {
@@ -209,23 +247,86 @@
   // Camera time has no timezone: show it exactly as the camera reported it.
   const fmtCamera = s => s ? s.replace('T', ' ').replace(/(\.\d{3})\d*$/, '$1') : '—';
   const show = v => (v === null || v === undefined || v === '') ? '—' : String(v);
+  const fmtUser = c => c.username ? '@' + c.username : (c.userFullName || show(c.userId));
 
-  function td(text, className) {
+  function td(text, className, title) {
     const cell = document.createElement('td');
     cell.textContent = text;
     if (className) cell.className = className;
+    if (title) cell.title = title;
     return cell;
   }
-  function badge(direction) {
+  function badgeCell(text, modifier) {
     const cell = document.createElement('td');
-    if (!direction) { cell.textContent = '—'; return cell; }
+    if (!text) { cell.textContent = '—'; return cell; }
     const span = document.createElement('span');
-    const d = direction.toLowerCase();
-    span.className = 'badge' + (d === 'in' ? ' in' : d === 'out' ? ' out' : '');
-    span.textContent = direction;
+    span.className = 'badge' + (modifier ? ' ' + modifier : '');
+    span.textContent = text;
     cell.appendChild(span);
     return cell;
   }
+  function directionBadge(direction) {
+    const d = (direction || '').toLowerCase();
+    return badgeCell(direction, d === 'in' ? 'in' : d === 'out' ? 'out' : '');
+  }
+  function outcomeBadge(outcome) {
+    return badgeCell(outcome, outcome === 'success' ? 'ok' : outcome === 'failed' || outcome === 'error' ? 'bad' : '');
+  }
+
+  // ---------- views (one per tab) ----------
+  const views = {
+    events: {
+      title: 'LPR Events',
+      path: '/api/events',
+      tbody: $('rows'), cols: 8,
+      empty: 'No events match the current filters.',
+      textInputs: [el.plate, el.cameraId],
+      selects: [],
+      filters(q) {
+        if (el.plate.value.trim()) q.set('plate', el.plate.value.trim());
+        if (el.cameraId.value.trim()) q.set('cameraId', el.cameraId.value.trim());
+      },
+      clear() { el.plate.value = el.cameraId.value = ''; },
+      row: e => [
+        td(fmtReceived(e.receivedAtUtc), 'mono'),
+        td(fmtCamera(e.cameraTime), 'mono'),
+        td(e.plateText, 'plate'),
+        directionBadge(e.direction),
+        td(show(e.listName)),
+        td(e.cameraName ? `${e.cameraName}${e.cameraNumber != null ? ' #' + e.cameraNumber : ''}` : show(e.cameraNumber)),
+        td(show(e.cameraId), 'mono'),
+        td(show(e.serverName)),
+      ],
+      open: openEventDetails,
+    },
+    bot: {
+      title: 'Bot commands · LPR',
+      path: '/api/bot-commands',
+      tbody: $('botRows'), cols: 7,
+      empty: 'No bot messages match the current filters.',
+      textInputs: [el.user, el.command],
+      selects: [el.outcome],
+      filters(q) {
+        if (el.user.value.trim()) q.set('user', el.user.value.trim());
+        if (el.command.value.trim()) q.set('command', el.command.value.trim());
+        if (el.outcome.value) q.set('outcome', el.outcome.value);
+      },
+      clear() { el.user.value = el.command.value = el.outcome.value = ''; },
+      row: c => [
+        td(fmtReceived(c.receivedAtUtc), 'mono'),
+        td(fmtUser(c), null, [c.userFullName, c.userId].filter(Boolean).join(' · ')),
+        td(show(c.chatId), 'mono'),
+        td(c.text, 'mono clip', c.text),
+        outcomeBadge(c.outcome),
+        td(show(c.resultMessage), 'clip', c.resultMessage),
+        td(`${c.durationMs} ms`, 'mono'),
+      ],
+      open: openBotDetails,
+    },
+  };
+  for (const v of Object.values(views)) Object.assign(v, { page: 1, known: new Set(), firstLoad: true, items: new Map() });
+  let current = 'events';
+  const view = () => views[current];
 
   // ---------- errors / health ----------
   function showError(message) {
@@ -255,14 +356,13 @@
   }
 
   // ---------- list ----------
-  function buildQuery() {
+  function buildQuery(v) {
     const q = new URLSearchParams();
-    if (el.plate.value.trim()) q.set('plate', el.plate.value.trim());
-    if (el.cameraId.value.trim()) q.set('cameraId', el.cameraId.value.trim());
+    v.filters(q);
     // datetime-local is in the viewer's local time; the API filters on receivedAtUtc.
     if (el.from.value) q.set('from', new Date(el.from.value).toISOString());
     if (el.to.value) q.set('to', new Date(el.to.value).toISOString());
-    q.set('page', state.page);
+    q.set('page', v.page);
     q.set('pageSize', el.pageSize.value);
     return q;
   }
@@ -272,21 +372,22 @@
     state.controller?.abort();
     const controller = state.controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
+    const v = view();
     el.refresh.disabled = true;
 
     try {
-      const res = await fetch(`${apiBase()}/api/events?${buildQuery()}`, { cache: 'no-store', signal: controller.signal });
+      const res = await fetch(`${apiBase()}${v.path}?${buildQuery(v)}`, { cache: 'no-store', signal: controller.signal });
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
       const data = await res.json();
 
       const pages = Math.max(1, Math.ceil(data.total / data.pageSize));
-      if (state.page > pages && data.total > 0) { state.page = pages; return load(); }
+      if (v.page > pages && data.total > 0) { v.page = pages; return load(); }
 
-      render(data, pages);
+      render(v, data, pages);
       showError('');
       el.updated.textContent = `Updated ${new Date().toLocaleTimeString()}`;
     } catch (err) {
-      if (controller !== state.controller) return; // superseded by a newer request
+      if (controller !== state.controller) return; // superseded by a newer request (or a tab switch)
       showError(err instanceof TypeError || err.name === 'AbortError' ? networkHint(err) : err.message);
     } finally {
       clearTimeout(timeout);
@@ -298,39 +399,29 @@
     checkHealth();
   }
 
-  function render(data, pages) {
-    state.total = data.total;
+  function render(v, data, pages) {
     const fragment = document.createDocumentFragment();
+    v.items = new Map(data.items.map(item => [item.id, item]));
 
-    for (const e of data.items) {
+    for (const item of data.items) {
       const tr = document.createElement('tr');
-      tr.dataset.id = e.id;
-      if (!state.firstLoad && !state.known.has(e.id)) tr.classList.add('is-new');
-      state.known.add(e.id);
-
-      tr.append(
-        td(fmtReceived(e.receivedAtUtc), 'mono'),
-        td(fmtCamera(e.cameraTime), 'mono'),
-        td(e.plateText, 'plate'),
-        badge(e.direction),
-        td(show(e.listName)),
-        td(e.cameraName ? `${e.cameraName}${e.cameraNumber != null ? ' #' + e.cameraNumber : ''}` : show(e.cameraNumber)),
-        td(show(e.cameraId), 'mono'),
-        td(show(e.serverName)),
-      );
+      tr.dataset.id = item.id;
+      if (!v.firstLoad && !v.known.has(item.id)) tr.classList.add('is-new');
+      v.known.add(item.id);
+      tr.append(...v.row(item));
       fragment.appendChild(tr);
     }
 
     if (!data.items.length) {
       const tr = document.createElement('tr');
-      const cell = td('No events match the current filters.', 'empty');
-      cell.colSpan = 8;
+      const cell = td(v.empty, 'empty');
+      cell.colSpan = v.cols;
       tr.appendChild(cell);
       fragment.appendChild(tr);
     }
 
-    el.rows.replaceChildren(fragment);
-    state.firstLoad = false;
+    v.tbody.replaceChildren(fragment);
+    v.firstLoad = false;
 
     const start = data.total ? (data.page - 1) * data.pageSize + 1 : 0;
     const end = Math.min(data.page * data.pageSize, data.total);
@@ -339,10 +430,24 @@
     el.next.disabled = data.page >= pages;
   }
 
+  // ---------- tabs ----------
+  function setView(name) {
+    current = views[name] ? name : 'events';
+    for (const node of document.querySelectorAll('[data-view]')) node.hidden = node.dataset.view !== current;
+    for (const tab of document.querySelectorAll('[data-tab]')) tab.setAttribute('aria-selected', String(tab.dataset.tab === current));
+    document.title = view().title;
+    const hash = current === 'events' ? '' : '#' + current;
+    if (location.hash !== hash) history.replaceState(null, '', location.pathname + location.search + hash);
+    el.pageInfo.textContent = '';
+    load();
+  }
+  for (const tab of document.querySelectorAll('[data-tab]')) tab.addEventListener('click', () => setView(tab.dataset.tab));
+  window.addEventListener('hashchange', () => setView(location.hash.slice(1)));
+
   // ---------- auto-refresh ----------
   function scheduleNext() {
     clearTimeout(state.timer);
-    if (!el.auto.checked || document.hidden) return;
+    if (!el.auto.checked || document.hidden || el.dialog.open) return;
     state.timer = setTimeout(load, Number(el.interval.value) * 1000);
   }
   document.addEventListener('visibilitychange', () => {
@@ -351,32 +456,39 @@
   });
 
   // ---------- details dialog ----------
-  async function openDetails(id) {
-    el.dlgTitle.textContent = 'Loading…';
+  function fillFields(fields) {
+    el.dlgFields.replaceChildren();
+    for (const [name, value] of fields) {
+      const dt = document.createElement('dt'); dt.textContent = name;
+      const dd = document.createElement('dd'); dd.textContent = show(value);
+      el.dlgFields.append(dt, dd);
+    }
+  }
+  function openDialog(title, rawLabel) {
+    el.dlgTitle.textContent = title;
+    el.rawLabel.textContent = rawLabel;
     el.dlgFields.replaceChildren();
     el.dlgRaw.textContent = '';
     el.dialog.showModal();
     clearTimeout(state.timer); // don't refresh underneath an open dialog
+  }
 
+  async function openEventDetails(id) {
+    openDialog('Loading…', 'Raw JSON (as received)');
     try {
       const res = await fetch(`${apiBase()}/api/events/${encodeURIComponent(id)}`, { cache: 'no-store' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const e = await res.json();
 
       el.dlgTitle.textContent = e.plateText;
-      const fields = [
+      fillFields([
         ['ID', e.id], ['Received (local)', fmtReceived(e.receivedAtUtc)], ['Received (UTC)', e.receivedAtUtc],
         ['Camera time', fmtCamera(e.cameraTime)], ['Raw timestamp', e.rawTimestamp], ['Event', e.event],
         ['Plate', e.plateText], ['Direction', e.direction], ['Plate description', e.plateDescription],
         ['List', e.listName], ['List description', e.listDescription],
         ['Camera', e.cameraName], ['Camera ID', e.cameraId], ['Camera number', e.cameraNumber], ['Camera index', e.cameraIndex],
         ['Server', e.serverName], ['Server domain', e.serverDomainName],
-      ];
-      for (const [name, value] of fields) {
-        const dt = document.createElement('dt'); dt.textContent = name;
-        const dd = document.createElement('dd'); dd.textContent = show(value);
-        el.dlgFields.append(dt, dd);
-      }
+      ]);
       let raw = e.rawJson ?? '';
       try { raw = JSON.stringify(JSON.parse(raw), null, 2); } catch { /* not valid JSON (e.g. repaired body): show as-is */ }
       el.dlgRaw.textContent = raw;
@@ -386,10 +498,28 @@
     }
   }
 
-  el.rows.addEventListener('click', ev => {
-    const tr = ev.target.closest('tr[data-id]');
-    if (tr) openDetails(tr.dataset.id);
-  });
+  // The list response already has every stored column, so no extra request is needed.
+  function openBotDetails(id) {
+    const c = views.bot.items.get(id);
+    if (!c) return;
+    openDialog(`${c.command || 'Message'} · ${fmtUser(c)}`, 'Message text');
+    fillFields([
+      ['ID', c.id], ['Received (local)', fmtReceived(c.receivedAtUtc)], ['Received (UTC)', c.receivedAtUtc],
+      ['Sent (local)', fmtReceived(c.sentAtUtc)], ['Sent (UTC)', c.sentAtUtc],
+      ['Username', c.username ? '@' + c.username : null], ['Full name', c.userFullName], ['User ID', c.userId],
+      ['Chat ID', c.chatId], ['Chat type', c.chatType], ['Message ID', c.messageId],
+      ['Command', c.command], ['Outcome', c.outcome], ['Result', c.resultMessage],
+      ['Relay status code', c.relayStatusCode], ['Duration', `${c.durationMs} ms`],
+    ]);
+    el.dlgRaw.textContent = c.text;
+  }
+
+  for (const v of Object.values(views)) {
+    v.tbody.addEventListener('click', ev => {
+      const tr = ev.target.closest('tr[data-id]');
+      if (tr) v.open(tr.dataset.id);
+    });
+  }
   el.dlgClose.addEventListener('click', () => el.dialog.close());
   el.dialog.addEventListener('click', ev => { if (ev.target === el.dialog) el.dialog.close(); });
   el.dialog.addEventListener('close', scheduleNext);
@@ -405,29 +535,39 @@
 
   // ---------- controls ----------
   let debounce;
-  const reloadFromFirstPage = () => { state.page = 1; load(); };
-  for (const input of [el.plate, el.cameraId]) {
-    input.addEventListener('input', () => { clearTimeout(debounce); debounce = setTimeout(reloadFromFirstPage, 350); });
+  const reloadFromFirstPage = () => { view().page = 1; load(); };
+  for (const v of Object.values(views)) {
+    for (const input of v.textInputs) {
+      input.addEventListener('input', () => { clearTimeout(debounce); debounce = setTimeout(reloadFromFirstPage, 350); });
+    }
+    for (const select of v.selects) select.addEventListener('change', reloadFromFirstPage);
   }
-  for (const input of [el.from, el.to, el.pageSize]) input.addEventListener('change', () => { saveSettings(); reloadFromFirstPage(); });
+  for (const input of [el.from, el.to, el.pageSize]) {
+    input.addEventListener('change', () => {
+      saveSettings();
+      for (const v of Object.values(views)) v.page = 1;
+      load();
+    });
+  }
   el.api.addEventListener('change', () => {
     saveSettings();
-    state.known.clear(); state.firstLoad = true;
+    for (const v of Object.values(views)) { v.known.clear(); v.firstLoad = true; v.page = 1; }
     el.swagger.href = `${apiBase()}/swagger`;
-    reloadFromFirstPage();
+    load();
   });
   el.auto.addEventListener('change', () => { saveSettings(); el.auto.checked ? load() : clearTimeout(state.timer); });
   el.interval.addEventListener('change', () => { saveSettings(); scheduleNext(); });
   el.refresh.addEventListener('click', load);
   el.clear.addEventListener('click', () => {
-    el.plate.value = el.cameraId.value = el.from.value = el.to.value = '';
+    el.from.value = el.to.value = '';
+    view().clear();
     reloadFromFirstPage();
   });
-  el.prev.addEventListener('click', () => { if (state.page > 1) { state.page--; load(); } });
-  el.next.addEventListener('click', () => { state.page++; load(); });
+  el.prev.addEventListener('click', () => { if (view().page > 1) { view().page--; load(); } });
+  el.next.addEventListener('click', () => { view().page++; load(); });
 
   el.swagger.href = `${apiBase()}/swagger`;
-  load();
+  setView(location.hash.slice(1));
 })();
 </script>
 </body>

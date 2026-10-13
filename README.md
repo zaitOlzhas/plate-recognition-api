@@ -87,6 +87,20 @@ The relay endpoint should respond with HTTP 200 and JSON body:
 
 If the relay returns this response, the bot will confirm success to the user. Any other response or error will result in an error message.
 
+#### Command log
+
+Every text message the bot receives is stored in the `bot_commands` table and logged at Information
+(`Bot command <id>: user=... command=... outcome=...`). This includes plain text and unknown commands. Each row has:
+
+- `receivedAtUtc` (when the API got the message) and `sentAtUtc` (when Telegram says the user sent it)
+- `chatId`, `chatType`, `userId`, `username`, `userFullName`, `messageId`
+- `text` (the full message) and `command` (lower-cased, without `@botname`, e.g. `/open_gate`; `null` for plain text)
+- `outcome`: `success`, `failed` (the relay said no or was unreachable), `error` (unexpected exception) or `ignored`
+  (not a known command)
+- `resultMessage`, `relayStatusCode`, `durationMs`
+
+If saving a row fails, the error is logged and the bot carries on.
+
 #### Access Control
 
 Currently, anyone who knows the bot can trigger the relay. For production use, consider restricting access by adding user ID whitelisting in a future enhancement.
@@ -122,13 +136,16 @@ docker compose logs -f lpr-webhook
 ## Events viewer
 
 Open `http://<host>:5080/` in a browser. The page is `src/LprWebhook.Api/wwwroot/index.html`, a single file with no
-external dependencies, and it is read-only.
+external dependencies, and it is read-only. It has two tabs: **Plate events** and **Bot commands** (`/#bot` opens the
+second one directly). The API, date range, page size and auto-refresh are shared; each tab keeps its own filters and page.
 
 - **Table:** received time (in your local time), camera time, plate, direction, list, camera and server, newest first.
 - **Filters:** plate (matches any part), camera ID, received from/to, and page size, with pagination.
 - **Refresh:** a Refresh button, plus auto-refresh every 3–60 s (on by default). Auto-refresh pauses while the tab is
   hidden or a detail view is open, and refreshes as soon as you come back. New events are briefly highlighted.
 - **Details:** click a row to see every field and the raw JSON exactly as received, with a Copy button.
+- **Bot commands tab:** received time, user, chat ID, message, outcome (colored), relay result and duration, filterable
+  by user, command and outcome. Click a row to see every stored field and the full message text.
 
 You can also open the file straight from disk. In that case set `CORS_ALLOWED_ORIGINS=null`, because otherwise the
 browser blocks the requests. The page has an API field for when the service isn't on `localhost:5080`.
@@ -170,6 +187,14 @@ Returns events newest first as `{ page, pageSize, total, items }`.
 ### `GET /api/events/{id}`
 Returns every stored field plus `rawJson`, or 404 if the id doesn't exist.
 
+### `GET /api/bot-commands?user=&chatId=&command=&outcome=&from=&to=&page=&pageSize=`
+Returns messages received by the Telegram bot, newest first, as `{ page, pageSize, total, items }`.
+- `user` is a numeric Telegram user ID (exact match), or text matched against any part of the username or full name.
+  A leading `@` is ignored.
+- `command` is the command with or without the leading `/` (for example `open_gate`).
+- `outcome` is one of `success`, `failed`, `error` or `ignored`.
+- `from`, `to` and `pageSize` work the same way as on `/api/events`.
+
 ### `GET /health`
 Returns `Healthy` if the app can reach the database. The container's `HEALTHCHECK` calls it through
 `dotnet LprWebhook.Api.dll --healthcheck`, because the runtime image has no curl.
@@ -181,8 +206,8 @@ src/LprWebhook.Api/
   Program.cs                 startup: SQLite, health checks, OpenAPI/Swagger UI, Telegram bot
   Contracts/                 request/response records
   Parsing/                   lenient JSON parsing and camera timestamp parsing
-  Data/                      PlateEvent entity, EventsDbContext, EnsureCreated at startup
-  Endpoints/EventEndpoints.cs
+  Data/                      PlateEvent and BotCommandLog entities, EventsDbContext, schema setup at startup
+  Endpoints/                 EventEndpoints.cs, BotCommandEndpoints.cs
   Configuration/             TelegramBotOptions (bound from the "TelegramBot" section)
   Services/                  TelegramBotService (long polling, /open_gate) and RelayService (POST to the relay)
 tests/LprWebhook.Api.Tests/  xUnit tests for deserialization and timestamps
@@ -197,5 +222,6 @@ docker build --target test .
 With the .NET 10 SDK installed you can run `dotnet test`, or start the app with `dotnet run --project src/LprWebhook.Api`.
 Running locally writes `events.db` to the project folder.
 
-The database schema is created with `EnsureCreated()` at startup. If you change the entity later, either switch to EF
-migrations or delete the volume.
+At startup the app runs EF's create script with `IF NOT EXISTS`, so new tables and indexes are added to an existing
+database. Columns are not: if you add a property to an existing entity, either switch to EF migrations or delete the
+volume.
