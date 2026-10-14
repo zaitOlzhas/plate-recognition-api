@@ -5,11 +5,13 @@ namespace LprWebhook.Api.Services;
 
 /// <summary>What the Telegram alert for a stored plate event shows.</summary>
 /// <param name="ResentBy">Set when an admin sent the alert again from the web viewer; shown in the message.</param>
+/// <param name="PreviousDecision">On a resend of a decided event, the decision it replaced (e.g. "denied by @bob").</param>
 public sealed record PlateAlert(
-    Guid EventId, string Plate, string? Camera, DateTime? CameraTime, DateTime ReceivedAtUtc, string? ResentBy = null)
+    Guid EventId, string Plate, string? Camera, DateTime? CameraTime, DateTime ReceivedAtUtc, string? ResentBy = null,
+    string? PreviousDecision = null)
 {
-    public static PlateAlert From(PlateEvent e, string? resentBy = null)
-        => new(e.Id, e.PlateText, e.CameraName ?? e.CameraId, e.CameraTime, e.ReceivedAtUtc, resentBy);
+    public static PlateAlert From(PlateEvent e, string? resentBy = null, string? previousDecision = null)
+        => new(e.Id, e.PlateText, e.CameraName ?? e.CameraId, e.CameraTime, e.ReceivedAtUtc, resentBy, previousDecision);
 }
 
 /// <summary>

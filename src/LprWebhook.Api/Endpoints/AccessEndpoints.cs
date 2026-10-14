@@ -28,7 +28,8 @@ public static class AccessEndpoints
         group.MapDelete("/users/{userId:long}/permissions/{permission}", RevokeAsync).WithSummary("Remove a command");
         group.MapPut("/users/{userId:long}/role", SetRoleAsync).WithSummary("Promote/demote (owner only)");
         group.MapGet("/audit", ListAuditAsync).WithSummary("Permission changes, newest first");
-        group.MapPost("/events/{id:guid}/resend-alert", ResendAlertAsync).WithSummary("Send a plate event's Telegram alert again");
+        group.MapPost("/events/{id:guid}/resend-alert", ResendAlertAsync).WithSummary("Send a plate event's Telegram alert again (clears an earlier decision)");
+        group.MapPost("/open-gate", OpenGateAsync).WithSummary("Pulse the gate relay, like /open_gate in the bot");
 
         return app;
     }
@@ -67,8 +68,9 @@ public static class AccessEndpoints
         => TypedResults.Ok(await access.ListAuditAsync(Math.Max(page ?? 1, 1), Math.Clamp(pageSize ?? 50, 1, MaxPageSize), ct));
 
     /// <summary>
-    /// Queues another copy of the alert (with fresh buttons) to everyone allowed to open the gate. Earlier copies keep
-    /// working; whichever button is pressed first decides and updates all of them.
+    /// Queues another copy of the alert (with fresh buttons) to every known user. Works for decided events too: the
+    /// earlier decision is cleared so the event can be decided again, and the new message says what it was.
+    /// Whichever button is pressed first then decides and updates every copy, old and new.
     /// </summary>
     private static async Task<IResult> ResendAlertAsync(
         Guid id, HttpContext http, EventsDbContext db, [FromServices] PlateAlertQueue? alerts,
@@ -77,17 +79,71 @@ public static class AccessEndpoints
         if (alerts is null)
             return TypedResults.BadRequest(new AccessActionResponse("invalid", "The Telegram bot is disabled, so there is nothing to send."));
 
-        var ev = await db.PlateEvents.AsNoTracking().Include(e => e.Decision).FirstOrDefaultAsync(e => e.Id == id, ct);
+        var ev = await db.PlateEvents.Include(e => e.Decision).FirstOrDefaultAsync(e => e.Id == id, ct);
         if (ev is null)
             return TypedResults.NotFound(new AccessActionResponse("invalid", "Event not found."));
-        if (ev.Decision is { } d)
-            return TypedResults.BadRequest(new AccessActionResponse("invalid",
-                $"Already {d.Status} by {d.DecidedByName ?? d.DecidedByUserId.ToString()}; nothing to decide."));
 
         var actor = GetActor(http);
-        alerts.Enqueue(PlateAlert.From(ev, actor.Name));
-        loggerFactory.CreateLogger("LprWebhook.Events").LogInformation("Plate alert {EventId} ({Plate}) resent by {Actor}", ev.Id, ev.PlateText, actor.Name);
-        return TypedResults.Ok(new AccessActionResponse("ok", "Alert sent again to everyone who can open the gate."));
+        var logger = loggerFactory.CreateLogger("LprWebhook.Events");
+        string? previous = null;
+        if (ev.Decision is { } d)
+        {
+            previous = PlateAlertHandler.Describe(d);
+            db.PlateDecisions.Remove(d);
+            await db.SaveChangesAsync(ct);
+            logger.LogInformation("Decision on plate event {EventId} ({Plate}) cleared by {Actor} for a resend; it was {Previous}",
+                ev.Id, ev.PlateText, actor.Name, previous);
+        }
+
+        alerts.Enqueue(PlateAlert.From(ev, actor.Name, previous));
+        logger.LogInformation("Plate alert {EventId} ({Plate}) resent by {Actor}", ev.Id, ev.PlateText, actor.Name);
+        return TypedResults.Ok(new AccessActionResponse("ok", previous is null
+            ? "Alert sent again to every known bot user."
+            : $"Alert sent again. The earlier decision ({previous}) was cleared, so it can be decided again."));
+    }
+
+    /// <summary>
+    /// The web version of /open_gate. Logged to bot_commands with chat type "web" so the Bot commands tab shows it
+    /// next to the Telegram presses.
+    /// </summary>
+    private static async Task<IResult> OpenGateAsync(
+        HttpContext http, EventsDbContext db, [FromServices] IRelayService? relay, ILoggerFactory loggerFactory, CancellationToken ct)
+    {
+        if (relay is null)
+            return TypedResults.BadRequest(new AccessActionResponse("invalid", "The Telegram bot is disabled, so the relay is not configured."));
+
+        var actor = GetActor(http);
+        var logger = loggerFactory.CreateLogger("LprWebhook.Gate");
+        var started = DateTime.UtcNow;
+        var result = await relay.TriggerRelayAsync(ct);
+
+        if (result.Success)
+            logger.LogInformation("Gate opened from the web by {Actor}", actor.Name);
+        else
+            logger.LogWarning("Failed to open gate from the web for {Actor}: {Error}", actor.Name, result.Message);
+
+        try
+        {
+            var user = await db.BotUsers.AsNoTracking().FirstOrDefaultAsync(u => u.UserId == actor.UserId, CancellationToken.None);
+            db.BotCommands.Add(new BotCommandLog
+            {
+                Id = Guid.NewGuid(), ReceivedAtUtc = started, SentAtUtc = started, ChatType = "web",
+                UserId = actor.UserId, Username = user?.Username, UserFullName = user?.FullName ?? actor.Name,
+                Text = "/open_gate", Command = "/open_gate", Outcome = result.Success ? "success" : "failed",
+                ResultMessage = result.Message, RelayStatusCode = result.StatusCode == 0 ? null : result.StatusCode,
+                DurationMs = (int)(DateTime.UtcNow - started).TotalMilliseconds,
+            });
+            await db.SaveChangesAsync(CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            // The gate has already been pulsed; a failed log write must not turn that into an error.
+            logger.LogError(ex, "Could not log the web /open_gate by {Actor}", actor.Name);
+        }
+
+        return result.Success
+            ? TypedResults.Ok(new AccessActionResponse("ok", $"Gate opened. {result.Message}"))
+            : TypedResults.Json(new AccessActionResponse("failed", $"Failed to open gate: {result.Message}"), statusCode: StatusCodes.Status502BadGateway);
     }
 
     private static IResult ToResult(AccessResult result) => result.Status switch

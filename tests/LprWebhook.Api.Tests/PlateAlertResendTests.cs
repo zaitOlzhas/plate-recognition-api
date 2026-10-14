@@ -93,7 +93,7 @@ public sealed class PlateAlertResendTests : IDisposable
     }
 
     [Fact]
-    public async Task Decided_or_unknown_events_are_not_resent()
+    public async Task Resending_a_decided_event_clears_the_decision_and_says_what_it_was()
     {
         var client = await SignedInClientAsync(OwnerId);
         var id = await PostEventAsync(client);
@@ -109,9 +109,25 @@ public sealed class PlateAlertResendTests : IDisposable
             await db.SaveChangesAsync();
         }
 
-        var decided = await client.PostAsync($"/api/access/events/{id}/resend-alert", null);
-        Assert.Equal(HttpStatusCode.BadRequest, decided.StatusCode);
-        Assert.Contains("Already denied by @owner", (await decided.Content.ReadFromJsonAsync<AccessActionResponse>())!.Message);
+        var response = await client.PostAsync($"/api/access/events/{id}/resend-alert", null);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains("denied by @owner", (await response.Content.ReadFromJsonAsync<AccessActionResponse>())!.Message);
+        var resent = Assert.Single(DrainQueue());
+        Assert.Equal("denied by @owner", resent.PreviousDecision);
+        Assert.EndsWith($"\n\nResent by {OwnerId} (was denied by @owner)", PlateAlertHandler.Format(resent));
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<EventsDbContext>();
+            Assert.False(db.PlateDecisions.Any(d => d.EventId == id)); // open to a new decision
+        }
+    }
+
+    [Fact]
+    public async Task Unknown_events_are_not_resent()
+    {
+        var client = await SignedInClientAsync(OwnerId);
 
         Assert.Equal(HttpStatusCode.NotFound, (await client.PostAsync($"/api/access/events/{Guid.NewGuid()}/resend-alert", null)).StatusCode);
         Assert.Empty(DrainQueue());

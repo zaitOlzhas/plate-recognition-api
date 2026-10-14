@@ -188,11 +188,15 @@ public class PlateAlertHandler(
             ? t.ToString("yyyy-MM-dd HH:mm:ss")
             : a.ReceivedAtUtc.ToString("yyyy-MM-dd HH:mm:ss") + " UTC";
         var text = $"Camera: {a.Camera ?? "unknown"}\nTime: {time}\nPlate: {a.Plate}";
-        return a.ResentBy is null ? text : $"{text}\n\nResent by {a.ResentBy}";
+        if (a.ResentBy is null) return text;
+        text += $"\n\nResent by {a.ResentBy}";
+        return a.PreviousDecision is null ? text : $"{text} (was {a.PreviousDecision})";
     }
 
-    private static string AlreadyDecided(PlateDecision d)
-        => $"Already {d.Status} by {d.DecidedByName ?? d.DecidedByUserId.ToString()}.";
+    /// <summary>"granted by @alice".</summary>
+    public static string Describe(PlateDecision d) => $"{d.Status} by {d.DecidedByName ?? d.DecidedByUserId.ToString()}";
+
+    private static string AlreadyDecided(PlateDecision d) => $"Already {Describe(d)}.";
 
     /// <summary>"open:&lt;guid&gt;" or "deny:&lt;guid&gt;".</summary>
     public static bool TryParse(string? data, out string action, out Guid eventId)

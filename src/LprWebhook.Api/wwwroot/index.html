@@ -214,6 +214,8 @@
     <div id="accessSignedIn" hidden>
       <div class="panel toolbar">
         <span>Signed in as <strong id="meName"></strong> <span id="meRole" class="badge"></span></span>
+        <button id="openGate" type="button" class="primary" title="Pulses the gate relay, like /open_gate in the bot">Open gate</button>
+        <span id="openGateNote" class="muted"></span>
         <span class="spacer"></span>
         <form id="addUserForm" class="row">
           <label class="field">Add user by Telegram ID
@@ -259,7 +261,7 @@
     <h2 id="dlgTitle">Event</h2>
     <span class="spacer"></span>
     <span id="resendNote" class="muted"></span>
-    <button id="resendAlert" type="button" hidden title="Admins only: sends this event's Open gate / Deny message to Telegram again">Resend Telegram alert</button>
+    <button id="resendAlert" type="button" hidden title="Admins only: sends this event's Open gate / Deny message to Telegram again. An earlier decision is cleared so it can be decided again.">Resend Telegram alert</button>
     <button id="dlgClose" type="button" aria-label="Close">Close</button>
   </div>
   <div class="dlg-body">
@@ -399,7 +401,7 @@
       row: c => [
         td(fmtReceived(c.receivedAtUtc), 'mono'),
         td(fmtUser(c), null, [c.userFullName, c.userId].filter(Boolean).join(' · ')),
-        td(show(c.chatId), 'mono'),
+        td(c.chatType === 'web' ? 'web' : show(c.chatId), 'mono'), // "Open gate" pressed in this viewer
         td(c.text, 'mono clip', c.text),
         outcomeBadge(c.outcome),
         td(show(c.resultMessage), 'clip', c.resultMessage),
@@ -587,10 +589,10 @@
       let raw = e.rawJson ?? '';
       try { raw = JSON.stringify(JSON.parse(raw), null, 2); } catch { /* not valid JSON (e.g. repaired body): show as-is */ }
       el.dlgRaw.textContent = raw;
-      // Only undecided events can be resent; the API also checks this and that you're a signed-in admin.
+      // Any event can be resent (a decided one is reopened); the API checks that you're a signed-in admin.
       el.resendAlert.dataset.id = e.id;
       el.resendAlert.disabled = false;
-      el.resendAlert.hidden = !!e.decision;
+      el.resendAlert.hidden = false;
     } catch (err) {
       el.dlgTitle.textContent = 'Could not load event';
       el.dlgRaw.textContent = err.message;
@@ -682,6 +684,7 @@
   const acc = {
     signedOut: $('accessSignedOut'), signedIn: $('accessSignedIn'), fileNote: $('fileNote'),
     loginForm: $('loginForm'), loginCode: $('loginCode'), meName: $('meName'), meRole: $('meRole'),
+    openGate: $('openGate'), openGateNote: $('openGateNote'),
     addUserForm: $('addUserForm'), addUserId: $('addUserId'), refresh: $('accessRefresh'), logout: $('logout'),
     usersHead: $('usersHead'), userRows: $('userRows'),
     auditRows: $('auditRows'), auditPrev: $('auditPrev'), auditNext: $('auditNext'), auditInfo: $('auditInfo'),
@@ -882,6 +885,19 @@
     const id = acc.addUserId.value.trim();
     if (!/^\d+$/.test(id)) { showError('A Telegram user ID is a number, e.g. 123456789.'); return; }
     runAction('POST', '/api/access/users', { userId: Number(id) }).then(() => { acc.addUserId.value = ''; });
+  });
+  acc.openGate.addEventListener('click', async () => {
+    acc.openGate.disabled = true;
+    acc.openGateNote.textContent = 'Opening…';
+    try {
+      const r = await accessApi('/api/access/open-gate', { method: 'POST' });
+      acc.openGateNote.textContent = r?.message || 'Gate opened.';
+    } catch (err) {
+      acc.openGateNote.textContent = '';
+      if (err instanceof SignedOut) { showSignedOut(); showError('Your session ended. Sign in again with /weblogin.'); }
+      else showError(err.message);
+    }
+    acc.openGate.disabled = false;
   });
   acc.refresh.addEventListener('click', refreshAccess);
   acc.logout.addEventListener('click', async () => {
