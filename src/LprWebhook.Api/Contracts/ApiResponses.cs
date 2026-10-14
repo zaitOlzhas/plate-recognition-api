@@ -20,7 +20,9 @@ public sealed record PlateEventSummary(
     string? CameraId,
     string? CameraName,
     int? CameraNumber,
-    string? ServerName);
+    string? ServerName,
+    string? Decision,
+    string? DecidedBy);
 
 public sealed record PlateEventDetails(
     Guid Id,
@@ -39,7 +41,10 @@ public sealed record PlateEventDetails(
     int? CameraIndex,
     string? ServerName,
     string? ServerDomainName,
-    string RawJson);
+    string RawJson,
+    string? Decision,
+    string? DecidedBy,
+    DateTime? DecidedAtUtc);
 
 public sealed record BotCommandLogItem(
     Guid Id,

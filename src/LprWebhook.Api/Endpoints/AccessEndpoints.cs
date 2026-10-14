@@ -1,6 +1,10 @@
 using LprWebhook.Api.Access;
 using LprWebhook.Api.Contracts;
+using LprWebhook.Api.Data;
+using LprWebhook.Api.Services;
 using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace LprWebhook.Api.Endpoints;
 
@@ -24,6 +28,7 @@ public static class AccessEndpoints
         group.MapDelete("/users/{userId:long}/permissions/{permission}", RevokeAsync).WithSummary("Remove a command");
         group.MapPut("/users/{userId:long}/role", SetRoleAsync).WithSummary("Promote/demote (owner only)");
         group.MapGet("/audit", ListAuditAsync).WithSummary("Permission changes, newest first");
+        group.MapPost("/events/{id:guid}/resend-alert", ResendAlertAsync).WithSummary("Send a plate event's Telegram alert again");
 
         return app;
     }
@@ -60,6 +65,30 @@ public static class AccessEndpoints
     private static async Task<Ok<PagedResponse<PermissionAuditItem>>> ListAuditAsync(
         int? page, int? pageSize, AccessService access, CancellationToken ct)
         => TypedResults.Ok(await access.ListAuditAsync(Math.Max(page ?? 1, 1), Math.Clamp(pageSize ?? 50, 1, MaxPageSize), ct));
+
+    /// <summary>
+    /// Queues another copy of the alert (with fresh buttons) to everyone allowed to open the gate. Earlier copies keep
+    /// working; whichever button is pressed first decides and updates all of them.
+    /// </summary>
+    private static async Task<IResult> ResendAlertAsync(
+        Guid id, HttpContext http, EventsDbContext db, [FromServices] PlateAlertQueue? alerts,
+        ILoggerFactory loggerFactory, CancellationToken ct)
+    {
+        if (alerts is null)
+            return TypedResults.BadRequest(new AccessActionResponse("invalid", "The Telegram bot is disabled, so there is nothing to send."));
+
+        var ev = await db.PlateEvents.AsNoTracking().Include(e => e.Decision).FirstOrDefaultAsync(e => e.Id == id, ct);
+        if (ev is null)
+            return TypedResults.NotFound(new AccessActionResponse("invalid", "Event not found."));
+        if (ev.Decision is { } d)
+            return TypedResults.BadRequest(new AccessActionResponse("invalid",
+                $"Already {d.Status} by {d.DecidedByName ?? d.DecidedByUserId.ToString()}; nothing to decide."));
+
+        var actor = GetActor(http);
+        alerts.Enqueue(PlateAlert.From(ev, actor.Name));
+        loggerFactory.CreateLogger("LprWebhook.Events").LogInformation("Plate alert {EventId} ({Plate}) resent by {Actor}", ev.Id, ev.PlateText, actor.Name);
+        return TypedResults.Ok(new AccessActionResponse("ok", "Alert sent again to everyone who can open the gate."));
+    }
 
     private static IResult ToResult(AccessResult result) => result.Status switch
     {

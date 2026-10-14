@@ -31,8 +31,15 @@ if (telegramOptions?.Enabled == true)
     });
 
     builder.Services.AddScoped<BotCommandHandler>();
+    builder.Services.AddScoped<PlateAlertHandler>();
+    builder.Services.AddSingleton<PlateAlertQueue>();
     builder.Services.AddHostedService<TelegramBotService>();
 }
+
+// Drops the repeats the camera sends while a car is in view.
+builder.Services.Configure<PlateEventOptions>(builder.Configuration.GetSection("PlateEvents"));
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<PlateDeduplicator>();
 
 var connectionString = builder.Configuration.GetConnectionString("Default") ?? "Data Source=events.db";
 builder.Services.AddDbContext<EventsDbContext>(o => o.UseSqlite(connectionString));

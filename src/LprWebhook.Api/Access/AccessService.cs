@@ -45,6 +45,23 @@ public class AccessService(EventsDbContext db, IOptions<TelegramBotOptions> opti
         return await db.UserPermissions.AnyAsync(p => p.UserId == userId && p.Permission == permission, ct);
     }
 
+    /// <summary>
+    /// Every known user (the owner and everyone in bot_users), each flagged with whether they may use
+    /// <paramref name="permission"/>. Used for plate alerts: everyone sees them, only allowed users get buttons.
+    /// </summary>
+    public async Task<IReadOnlyList<(long UserId, bool Allowed)>> ListUsersWithPermissionAsync(string permission, CancellationToken ct = default)
+    {
+        var users = await db.BotUsers.Select(u => new { u.UserId, u.Role }).ToListAsync(ct);
+        var granted = (await db.UserPermissions.Where(p => p.Permission == permission).Select(p => p.UserId).ToListAsync(ct)).ToHashSet();
+
+        var result = new List<(long, bool)>();
+        if (_ownerId is { } ownerId) result.Add((ownerId, true));
+        result.AddRange(users
+            .Where(u => !IsOwner(u.UserId))
+            .Select(u => (u.UserId, u.Role == Roles.Admin || granted.Contains(u.UserId))));
+        return result;
+    }
+
     /// <summary>Permissions the user can actually use (all of them for admins).</summary>
     public async Task<IReadOnlyList<BotPermission>> GetUsablePermissionsAsync(long userId, CancellationToken ct = default)
     {

@@ -35,13 +35,24 @@ On Windows, Docker Desktop must be running (error mentioning `dockerDesktopLinux
   Don't make it stricter without tests covering the vendor quirks listed in the README.
 - `Data/` — `PlateEvent`, `BotCommandLog`, `BotUser`/`UserPermission`/`PermissionAudit`, `EventsDbContext`.
   No migrations: startup runs the EF create script with `IF NOT EXISTS`, so new tables appear in existing DBs but new
-  columns on existing tables do not.
+  columns on existing tables do not. That's why decisions live in `plate_decisions` (1:1 with `plate_events`), not
+  in new columns.
 - `Configuration/TelegramBotOptions.cs` — bound from the `TelegramBot` config section (incl. `OwnerUserId`, `WebBaseUrl`).
 - `Services/TelegramBotService.cs` — hosted service: long polling, upserts the sender into `bot_users`, saves every
   text message to `bot_commands` (a failed save is logged and must never break the bot), sets the command menu.
 - `Services/BotCommandHandler.cs` — scoped, one method per command; sets the record's outcome
   (`success`/`failed`/`error`/`denied`/`ignored`). Replies are plain text (no parse mode) on purpose.
 - `Services/RelayService.cs` — HTTP POST to the relay. Bot services are registered only when `TelegramBot:Enabled`.
+- `Services/PlateDeduplicator.cs` — singleton, in-memory: same plate + camera within `PlateEvents:DuplicateWindowSeconds`
+  of its last sighting (sliding) is answered `"duplicate"` and not stored/logged/alerted.
+- `Services/PlateAlertQueue.cs` + `PlateAlertHandler.cs` — the webhook enqueues each stored event (queue exists only
+  with the bot on, so the endpoint takes it as `[FromServices] PlateAlertQueue?`); `TelegramBotService` drains it and
+  sends the alert to every known user (`AccessService.ListUsersWithPermissionAsync`); only those allowed `open_gate`
+  get the "Open gate"/"Deny" buttons. Callback data is `open:<guid N>`/`deny:<guid N>`.
+  `DecideAsync` is Telegram-free (tested directly); first press wins via the `plate_decisions` PK, a failed relay
+  removes the decision again. `plate_alert_messages` (key `ChatId`+`MessageId`) remembers every copy, including
+  resends, so all of them get edited. Resend = `POST /api/access/events/{id}/resend-alert` (admin cookie, undecided
+  events only) → same queue with `PlateAlert.ResentBy` set.
 - `wwwroot/index.html` — single-file viewer, no external dependencies. Tabs: `Plate events`, `Bot commands` (`/#bot`)
   driven by a `views` map (endpoint, filters, row renderer, details handler, own paging); `Access` (`/#access`) is
   separate code (`loadAccess`/`refreshAccess`) because it's a signed-in admin screen, not a filtered list.
