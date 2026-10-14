@@ -37,6 +37,15 @@ docker compose pull && docker compose up -d --no-build   # also how you update t
 ```
 
 Pin a version with `LPR_IMAGE=ghcr.io/zaitolzhas/lpr-webhook-api:sha-1a2b3c4` to stay on (or roll back to) a commit.
+
+#### One-click install / update on Windows (`deploy.bat`)
+
+Needs Git and Docker Desktop. Download
+[`deploy.bat`](https://raw.githubusercontent.com/zaitOlzhas/plate-recognition-api/main/deploy.bat) into any folder
+(e.g. `C:\lpr`) and double-click it. It clones the repo next to itself (or pulls the latest code), starts Docker
+Desktop if needed, creates `.env` on the first run and opens it in Notepad, pulls the newest image (building locally
+if the pull fails), restarts the container, waits until it is healthy and opens the viewer. Double-click it again to
+update; `.env` and the data volume are kept. The copy inside the cloned folder works the same way.
 The package must be **public** to pull without `docker login` (GitHub → Packages → `lpr-webhook-api` → Package
 settings → Change visibility); new packages start private. The image is built for `linux/amd64`.
 
