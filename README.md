@@ -20,6 +20,26 @@ docker compose up -d --build
 Data is stored in `/data/events.db` inside the named volume `lpr-data`, so it survives restarts and rebuilds.
 `docker compose down -v` deletes it.
 
+### Run the published image (no build on the server)
+
+Every new commit on `main` (a push or a merged PR) is tested and published by GitHub Actions
+(`.github/workflows/docker-publish.yml`) as `ghcr.io/zaitolzhas/lpr-webhook-api`, tagged `latest` and
+`sha-<short commit>`. Pull requests only run the tests.
+
+On the server you need just `docker-compose.yml` and a `.env` with your settings plus:
+
+```env
+LPR_IMAGE=ghcr.io/zaitolzhas/lpr-webhook-api:latest
+```
+
+```sh
+docker compose pull && docker compose up -d --no-build   # also how you update to the newest image
+```
+
+Pin a version with `LPR_IMAGE=ghcr.io/zaitolzhas/lpr-webhook-api:sha-1a2b3c4` to stay on (or roll back to) a commit.
+The package must be **public** to pull without `docker login` (GitHub → Packages → `lpr-webhook-api` → Package
+settings → Change visibility); new packages start private. The image is built for `linux/amd64`.
+
 ### Configuration (environment variables)
 
 | Variable | Default | Meaning |
