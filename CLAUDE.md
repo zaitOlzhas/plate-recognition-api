@@ -51,8 +51,8 @@ On Windows, Docker Desktop must be running (error mentioning `dockerDesktopLinux
   get the "Open gate"/"Deny" buttons. Callback data is `open:<guid N>`/`deny:<guid N>`.
   `DecideAsync` is Telegram-free (tested directly); first press wins via the `plate_decisions` PK, a failed relay
   removes the decision again. `plate_alert_messages` (key `ChatId`+`MessageId`) remembers every copy, including
-  resends, so all of them get edited. Resend = `POST /api/access/events/{id}/resend-alert` (admin cookie, undecided
-  events only) → same queue with `PlateAlert.ResentBy` set.
+  resends, so all of them get edited. Resend = `POST /api/access/events/{id}/resend-alert` (admin cookie, any event;
+  a decided one is reopened by deleting its `plate_decisions` row) → same queue with `PlateAlert.ResentBy` set.
 - `wwwroot/index.html` — single-file viewer, no external dependencies. Tabs: `Plate events`, `Bot commands` (`/#bot`)
   driven by a `views` map (endpoint, filters, row renderer, details handler, own paging); `Access` (`/#access`) is
   separate code (`loadAccess`/`refreshAccess`) because it's a signed-in admin screen, not a filtered list.

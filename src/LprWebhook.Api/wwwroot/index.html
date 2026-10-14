@@ -69,6 +69,7 @@
   .badge.out { color: var(--out); background: var(--out-bg); }
   .badge.ok { color: var(--in); background: var(--in-bg); }
   .badge.bad { color: var(--err); background: var(--err-bg); }
+  .row-btn { padding: 2px 8px; font-size: 12px; white-space: nowrap; }
   .clip { max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
   .pad { padding: 16px; }
   .pad-x { padding: 0 12px 10px; margin: 8px 0 0; font-size: 13px; }
@@ -173,10 +174,10 @@
         <thead>
           <tr>
             <th>Received</th><th>Camera time</th><th>Plate</th><th>Direction</th>
-            <th>List</th><th>Camera</th><th>Camera ID</th><th>Server</th><th>Decision</th>
+            <th>List</th><th>Camera</th><th>Camera ID</th><th>Server</th><th>Decision</th><th>Alert</th>
           </tr>
         </thead>
-        <tbody id="rows"><tr><td class="empty" colspan="9">Loading…</td></tr></tbody>
+        <tbody id="rows"><tr><td class="empty" colspan="10">Loading…</td></tr></tbody>
       </table>
     </div>
     <div class="table-wrap" data-view="bot" hidden>
@@ -356,12 +357,45 @@
     return cell;
   }
 
+  // ---------- resend Telegram alert (admins only; the API checks the cookie) ----------
+  // A decided event is reopened by the API: its decision is cleared so the new buttons can decide again.
+  async function resendAlert(e) {
+    if (e.decision && !confirm(`${e.plateText} was already ${e.decision}${e.decidedBy ? ' by ' + e.decidedBy : ''}. ` +
+                               'Clear that decision and send the alert with fresh buttons?')) return null;
+    try {
+      const r = await accessApi(`/api/access/events/${encodeURIComponent(e.id)}/resend-alert`, { method: 'POST' });
+      return { ok: true, message: r?.message || 'Sent.' };
+    } catch (err) {
+      return { ok: false, message: err instanceof SignedOut ? 'Sign in on the Access tab first (send /weblogin to the bot).' : err.message };
+    }
+  }
+  function resendCell(e) {
+    const cell = document.createElement('td');
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'row-btn';
+    btn.textContent = 'Resend';
+    btn.title = e.decision ? 'Reopen this event and send its Telegram alert again' : "Send this event's Telegram alert again";
+    btn.addEventListener('click', async ev => {
+      ev.stopPropagation(); // the row click opens the details dialog
+      btn.disabled = true;
+      const r = await resendAlert(e);
+      if (!r) { btn.disabled = false; return; }
+      btn.textContent = r.ok ? 'Sent ✓' : 'Failed';
+      btn.title = r.message;
+      if (r.ok) { showError(''); setTimeout(load, 1500); } // picks up a cleared decision
+      else { showError(r.message); btn.disabled = false; }
+    });
+    cell.appendChild(btn);
+    return cell;
+  }
+
   // ---------- views (one per tab) ----------
   const views = {
     events: {
       title: 'LPR Events',
       path: '/api/events',
-      tbody: $('rows'), cols: 9,
+      tbody: $('rows'), cols: 10,
       empty: 'No events match the current filters.',
       textInputs: [el.plate, el.cameraId],
       selects: [],
@@ -380,6 +414,7 @@
         td(show(e.cameraId), 'mono'),
         td(show(e.serverName)),
         decisionBadge(e.decision, e.decidedBy),
+        resendCell(e),
       ],
       open: openEventDetails,
     },
@@ -587,10 +622,10 @@
       let raw = e.rawJson ?? '';
       try { raw = JSON.stringify(JSON.parse(raw), null, 2); } catch { /* not valid JSON (e.g. repaired body): show as-is */ }
       el.dlgRaw.textContent = raw;
-      // Only undecided events can be resent; the API also checks this and that you're a signed-in admin.
-      el.resendAlert.dataset.id = e.id;
+      // Any event can be resent (a decided one is reopened); the API checks that you're a signed-in admin.
+      state.dialogEvent = e;
       el.resendAlert.disabled = false;
-      el.resendAlert.hidden = !!e.decision;
+      el.resendAlert.hidden = false;
     } catch (err) {
       el.dlgTitle.textContent = 'Could not load event';
       el.dlgRaw.textContent = err.message;
@@ -622,14 +657,9 @@
   el.resendAlert.addEventListener('click', async () => {
     el.resendAlert.disabled = true;
     el.resendNote.textContent = 'Sending…';
-    try {
-      const r = await accessApi(`/api/access/events/${encodeURIComponent(el.resendAlert.dataset.id)}/resend-alert`, { method: 'POST' });
-      el.resendNote.textContent = r?.message || 'Sent.';
-    } catch (err) {
-      el.resendNote.textContent = err instanceof SignedOut
-        ? 'Sign in on the Access tab first (send /weblogin to the bot).'
-        : err.message;
-    }
+    const r = await resendAlert(state.dialogEvent);
+    el.resendNote.textContent = r ? r.message : '';
+    if (r?.ok) state.dialogEvent = { ...state.dialogEvent, decision: null, decidedBy: null };
     el.resendAlert.disabled = false;
   });
   el.dlgClose.addEventListener('click', () => el.dialog.close());

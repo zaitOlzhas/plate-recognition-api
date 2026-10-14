@@ -113,9 +113,11 @@ Plate: 123ABC02
 - The first press decides for everybody: every copy of the alert, including those sent without buttons, shows who decided
   ("✅ Gate opened by @bob" / "⛔ Denied by @bob"). A later press on a stale copy answers "Already granted by @bob".
 - Someone whose `open_gate` permission was revoked after the alert went out gets "Not allowed".
-- **Resend:** a signed-in admin can open an undecided event in the viewer and click **Resend Telegram alert**. Everyone
-  gets a second message for the same event, ending in "Resent by @admin". The earlier copies keep working, and
-  whichever button is pressed first decides and updates every copy.
+- **Resend:** a signed-in admin can click **Resend** on any plate event row in the viewer (or **Resend Telegram alert**
+  in its details). Everyone gets another message for the same event, ending in "Resent by @admin". The earlier copies
+  keep working, and whichever button is pressed first decides and updates every copy. Resending an event that was
+  already decided reopens it (after a confirmation): the decision is cleared so the new buttons can decide again.
+  The earlier press is still in the Bot commands log.
 
 The decision is stored in the `plate_decisions` table and shown in the viewer's Decision column and in
 `GET /api/events`. Button presses are logged in the command log like typed commands (`command` `/open_gate` or
@@ -221,8 +223,9 @@ from the API, not from disk.
 - **Filters:** plate (matches any part), camera ID, received from/to, and page size, with pagination.
 - **Refresh:** a Refresh button, plus auto-refresh every 3–60 s (on by default). Auto-refresh pauses while the tab is
   hidden or a detail view is open, and refreshes as soon as you come back. New events are briefly highlighted.
-- **Details:** click a row to see every field and the raw JSON exactly as received, with a Copy button. Undecided
-  plate events also have a **Resend Telegram alert** button (admins signed in on the Access tab only).
+- **Details:** click a row to see every field and the raw JSON exactly as received, with a Copy button. Every
+  plate event has a **Resend** button in its row and a **Resend Telegram alert** button in its details (admins signed
+  in on the Access tab only).
 - **Bot commands tab:** received time, user, chat ID, message, outcome (colored), relay result and duration, filterable
   by user, command and outcome. Click a row to see every stored field and the full message text.
 
@@ -293,7 +296,7 @@ Everything under `/api/access` needs that cookie, and the user must still be an 
 | `PUT` / `DELETE /api/access/users/{id}/permissions/{permission}` | Grant / revoke |
 | `PUT /api/access/users/{id}/role {"role":"admin"\|"user"}` | Promote / demote (owner only) |
 | `GET /api/access/audit?page=&pageSize=` | Permission changes, newest first |
-| `POST /api/access/events/{id}/resend-alert` | Send a plate event's Telegram alert again. `400` if the bot is off or the event is already decided, `404` if it doesn't exist |
+| `POST /api/access/events/{id}/resend-alert` | Send a plate event's Telegram alert again. A decided event is reopened (its decision is cleared). `400` if the bot is off, `404` if it doesn't exist |
 
 Changes return `200 {"status":"ok","message":"..."}`, `403` with `"denied"` if you aren't allowed, or `400` with
 `"invalid"` for bad input (e.g. an unknown permission).

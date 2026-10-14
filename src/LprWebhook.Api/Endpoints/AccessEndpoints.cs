@@ -68,7 +68,8 @@ public static class AccessEndpoints
 
     /// <summary>
     /// Queues another copy of the alert (with fresh buttons) to everyone allowed to open the gate. Earlier copies keep
-    /// working; whichever button is pressed first decides and updates all of them.
+    /// working; whichever button is pressed first decides and updates all of them. A decided event is reopened: its
+    /// decision is removed so the new buttons can decide again (the earlier press stays in the bot command log).
     /// </summary>
     private static async Task<IResult> ResendAlertAsync(
         Guid id, HttpContext http, EventsDbContext db, [FromServices] PlateAlertQueue? alerts,
@@ -77,17 +78,26 @@ public static class AccessEndpoints
         if (alerts is null)
             return TypedResults.BadRequest(new AccessActionResponse("invalid", "The Telegram bot is disabled, so there is nothing to send."));
 
-        var ev = await db.PlateEvents.AsNoTracking().Include(e => e.Decision).FirstOrDefaultAsync(e => e.Id == id, ct);
+        var ev = await db.PlateEvents.Include(e => e.Decision).FirstOrDefaultAsync(e => e.Id == id, ct);
         if (ev is null)
             return TypedResults.NotFound(new AccessActionResponse("invalid", "Event not found."));
-        if (ev.Decision is { } d)
-            return TypedResults.BadRequest(new AccessActionResponse("invalid",
-                $"Already {d.Status} by {d.DecidedByName ?? d.DecidedByUserId.ToString()}; nothing to decide."));
 
         var actor = GetActor(http);
+        var logger = loggerFactory.CreateLogger("LprWebhook.Events");
+        string? reopened = null;
+        if (ev.Decision is { } d)
+        {
+            reopened = $"{d.Status} by {d.DecidedByName ?? d.DecidedByUserId.ToString()}";
+            db.PlateDecisions.Remove(d);
+            await db.SaveChangesAsync(ct);
+            logger.LogInformation("Plate event {EventId} ({Plate}) reopened by {Actor}; it was {Decision}", ev.Id, ev.PlateText, actor.Name, reopened);
+        }
+
         alerts.Enqueue(PlateAlert.From(ev, actor.Name));
-        loggerFactory.CreateLogger("LprWebhook.Events").LogInformation("Plate alert {EventId} ({Plate}) resent by {Actor}", ev.Id, ev.PlateText, actor.Name);
-        return TypedResults.Ok(new AccessActionResponse("ok", "Alert sent again to everyone who can open the gate."));
+        logger.LogInformation("Plate alert {EventId} ({Plate}) resent by {Actor}", ev.Id, ev.PlateText, actor.Name);
+        return TypedResults.Ok(new AccessActionResponse("ok", reopened is null
+            ? "Alert sent again to everyone who can open the gate."
+            : $"Reopened (was {reopened}); alert sent again to everyone who can open the gate."));
     }
 
     private static IResult ToResult(AccessResult result) => result.Status switch
