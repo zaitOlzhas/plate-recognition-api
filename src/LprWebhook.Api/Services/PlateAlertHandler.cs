@@ -3,6 +3,7 @@ using LprWebhook.Api.Data;
 using Microsoft.EntityFrameworkCore;
 using Telegram.Bot;
 using Telegram.Bot.Types;
+using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups;
 
 namespace LprWebhook.Api.Services;
@@ -46,6 +47,7 @@ public class PlateAlertHandler(
             },
         });
         var text = Format(alert);
+        var entities = PlateBold(alert);
 
         var sent = 0;
         foreach (var (chatId, canOpenGate) in recipients)
@@ -53,7 +55,7 @@ public class PlateAlertHandler(
             try
             {
                 // A private chat's ID is the user's ID. Users without open_gate see the event but get no buttons.
-                var message = await bot.SendMessage(chatId, text, replyMarkup: canOpenGate ? keyboard : null, cancellationToken: ct);
+                var message = await bot.SendMessage(chatId, text, entities: entities, replyMarkup: canOpenGate ? keyboard : null, cancellationToken: ct);
                 db.PlateAlertMessages.Add(new PlateAlertMessage
                 {
                     EventId = alert.EventId, ChatId = chatId, MessageId = message.MessageId, SentAtUtc = DateTime.UtcNow,
@@ -163,7 +165,8 @@ public class PlateAlertHandler(
             targets.Add(new { ChatId = pressed.Chat.Id, pressed.MessageId });
 
         var d = ev.Decision!;
-        var text = $"{Format(PlateAlert.From(ev))}\n\n" +
+        var alert = PlateAlert.From(ev);
+        var text = $"{Format(alert)}\n\n" +
                    (d.Status == PlateDecisionStatus.Granted ? "✅ Gate opened by " : "⛔ Denied by ") +
                    (d.DecidedByName ?? d.DecidedByUserId.ToString());
 
@@ -172,7 +175,7 @@ public class PlateAlertHandler(
             try
             {
                 // No replyMarkup: removes the buttons.
-                await bot.EditMessageText(t.ChatId, t.MessageId, text, cancellationToken: ct);
+                await bot.EditMessageText(t.ChatId, t.MessageId, text, entities: PlateBold(alert), cancellationToken: ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -182,14 +185,22 @@ public class PlateAlertHandler(
         }
     }
 
+    /// <summary>Plate on the first line (made bold by <see cref="PlateBold"/>), then the time, then the camera.</summary>
     public static string Format(PlateAlert a)
     {
         var time = a.CameraTime is { } t
             ? t.ToString("yyyy-MM-dd HH:mm:ss")
             : a.ReceivedAtUtc.ToString("yyyy-MM-dd HH:mm:ss") + " UTC";
-        var text = $"Camera: {a.Camera ?? "unknown"}\nTime: {time}\nPlate: {a.Plate}";
+        var text = $"{a.Plate}\n{time}\nCamera: {a.Camera ?? "unknown"}";
         return a.ResentBy is null ? text : $"{text}\n\nResent by {a.ResentBy}";
     }
+
+    /// <summary>
+    /// Bolds the plate at the start of <see cref="Format"/>'s text. An entity instead of a parse mode, so plate or
+    /// camera names never need escaping. Telegram has no font sizes; bold is as prominent as text gets.
+    /// </summary>
+    public static MessageEntity[] PlateBold(PlateAlert a)
+        => [new MessageEntity { Type = MessageEntityType.Bold, Offset = 0, Length = a.Plate.Length }];
 
     private static string AlreadyDecided(PlateDecision d)
         => $"Already {d.Status} by {d.DecidedByName ?? d.DecidedByUserId.ToString()}.";

@@ -6,6 +6,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Telegram.Bot.Types.Enums;
 
 namespace LprWebhook.Api.Tests;
 
@@ -153,7 +154,13 @@ public sealed class PlateAlertHandlerTests : IDisposable
         => Assert.False(PlateAlertHandler.TryParse(data, out _, out _));
 
     [Fact]
-    public void Alert_text_shows_camera_time_and_plate()
-        => Assert.Equal("Camera: Gate Entrance\nTime: 2026-10-05 14:23:07\nPlate: 123ABC02",
-            PlateAlertHandler.Format(new PlateAlert(_eventId, "123ABC02", "Gate Entrance", new DateTime(2026, 10, 5, 14, 23, 7, 512), DateTime.UtcNow)));
+    public void Alert_text_shows_bold_plate_then_time_then_camera()
+    {
+        var alert = new PlateAlert(_eventId, "123ABC02", "Gate Entrance", new DateTime(2026, 10, 5, 14, 23, 7, 512), DateTime.UtcNow);
+
+        Assert.Equal("123ABC02\n2026-10-05 14:23:07\nCamera: Gate Entrance", PlateAlertHandler.Format(alert));
+        var bold = Assert.Single(PlateAlertHandler.PlateBold(alert));
+        Assert.Equal(MessageEntityType.Bold, bold.Type);
+        Assert.Equal((0, 8), (bold.Offset, bold.Length));
+    }
 }

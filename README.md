@@ -99,13 +99,14 @@ private chat with the bot, so they must have started the bot at least once. Ever
 who may use `/open_gate` (the owner, admins and users granted `open_gate`) get the buttons:
 
 ```
+123ABC02                  ← bold
+2026-10-05 14:23:07
 Camera: Gate Entrance
-Time: 2026-10-05 14:23:07
-Plate: 123ABC02
 [Open gate] [Deny]
 ```
 
-`Time` is the camera time; if the camera didn't send a usable one, it's the time the API received the event, in UTC.
+The plate is the bold first line (Telegram has no font sizes, so bold is the most it can stand out). The time is the
+camera time; if the camera didn't send a usable one, it's the time the API received the event, in UTC.
 
 - **Open gate** pulses the relay like `/open_gate` and marks the event `granted`. If the relay fails, the event stays
   undecided and the buttons stay, so you can try again.
