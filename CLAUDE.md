@@ -17,6 +17,9 @@ docker compose logs -f lpr-webhook
 
 CI: `.github/workflows/docker-publish.yml` runs the `test` Docker target on PRs and pushes to `main`; on `main` it
 also pushes `ghcr.io/<owner>/lpr-webhook-api:latest` + `:sha-<short>`. Servers pick it via `LPR_IMAGE` in `.env`.
+`deploy.bat` (Windows, must stay CRLF via `.gitattributes`) is the one-click server install/update; it re-runs itself
+from `%TEMP%` because `git pull` can rewrite it mid-run, and keeps paths without a trailing `\` (git.exe reads `\"`
+as a quote).
 
 On Windows, Docker Desktop must be running (error mentioning `dockerDesktopLinuxEngine` pipe = engine is down).
 
