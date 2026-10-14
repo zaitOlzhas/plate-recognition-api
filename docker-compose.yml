@@ -3,7 +3,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: lpr-webhook-api:latest
+    # Set LPR_IMAGE=ghcr.io/zaitolzhas/lpr-webhook-api:latest to run the image CI publishes instead of building.
+    image: ${LPR_IMAGE:-lpr-webhook-api:latest}
     container_name: lpr-webhook
     restart: unless-stopped
     ports:

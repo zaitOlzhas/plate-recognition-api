@@ -15,6 +15,9 @@ docker compose up -d --build                  # build image and (re)start contai
 docker compose logs -f lpr-webhook
 ```
 
+CI: `.github/workflows/docker-publish.yml` runs the `test` Docker target on PRs and pushes to `main`; on `main` it
+also pushes `ghcr.io/<owner>/lpr-webhook-api:latest` + `:sha-<short>`. Servers pick it via `LPR_IMAGE` in `.env`.
+
 On Windows, Docker Desktop must be running (error mentioning `dockerDesktopLinuxEngine` pipe = engine is down).
 
 ## Layout
