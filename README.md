@@ -27,6 +27,7 @@ Data is stored in `/data/events.db` inside the named volume `lpr-data`, so it su
 | `API_KEY` | *(empty)* | If set, `POST /api/events/plate` requires the header `X-Api-Key: <value>` (401 otherwise). If empty, all requests are accepted. |
 | `ConnectionStrings__Default` | `Data Source=/data/events.db` | SQLite connection string. |
 | `Swagger__Enabled` | `true` | Serves `/swagger` and `/openapi/v1.json`, in Production too. Compose reads it from `SWAGGER_ENABLED`. |
+| `PlateEvents__DuplicateWindowSeconds` | `30` | The camera sends the same plate several times per second while a car is in view. A plate seen again by the same camera within this many seconds of its *last* sighting is dropped (see [`POST /api/events/plate`](#post-apieventsplate)). Every repeat restarts the window, so a car standing at the gate is one event. `0` turns this off. Compose reads it from `DUPLICATE_WINDOW_SECONDS`. |
 | `Cors__AllowedOrigins` | *(empty)* | Comma-separated origins allowed to read the API from a browser (GET only). Use `null` to open `index.html` straight from disk. Compose reads it from `CORS_ALLOWED_ORIGINS`. |
 | `Logging__Console__FormatterName` | `json` | `json` writes one JSON object per line. `simple` gives plain-text lines. |
 | `Logging__LogLevel__LprWebhook.RawBody` | `Debug` | Raw request bodies are logged at Debug. Set this to `Information` to stop logging them. |
@@ -90,6 +91,36 @@ RELAY_ENDPOINT=out1_pulse
 "Not allowed. Your Telegram ID is N — send it to an admin", and the attempt is logged with outcome `denied`.
 Commands sent in a group as `/open_gate@YourBot` work the same way.
 
+#### Plate alerts
+
+Every plate event that is stored (repeats are not, see `PlateEvents__DuplicateWindowSeconds`) is sent as a message
+to everyone the bot knows: the owner and every user who has messaged the bot or was added by ID. It goes to their
+private chat with the bot, so they must have started the bot at least once. Everyone sees the event, but only people
+who may use `/open_gate` (the owner, admins and users granted `open_gate`) get the buttons:
+
+```
+Camera: Gate Entrance
+Time: 2026-10-05 14:23:07
+Plate: 123ABC02
+[Open gate] [Deny]
+```
+
+`Time` is the camera time; if the camera didn't send a usable one, it's the time the API received the event, in UTC.
+
+- **Open gate** pulses the relay like `/open_gate` and marks the event `granted`. If the relay fails, the event stays
+  undecided and the buttons stay, so you can try again.
+- **Deny** only marks the event `denied`.
+- The first press decides for everybody: every copy of the alert, including those sent without buttons, shows who decided
+  ("✅ Gate opened by @bob" / "⛔ Denied by @bob"). A later press on a stale copy answers "Already granted by @bob".
+- Someone whose `open_gate` permission was revoked after the alert went out gets "Not allowed".
+- **Resend:** a signed-in admin can open an undecided event in the viewer and click **Resend Telegram alert**. Everyone
+  gets a second message for the same event, ending in "Resent by @admin". The earlier copies keep working, and
+  whichever button is pressed first decides and updates every copy.
+
+The decision is stored in the `plate_decisions` table and shown in the viewer's Decision column and in
+`GET /api/events`. Button presses are logged in the command log like typed commands (`command` `/open_gate` or
+`/deny`, `text` `[button] open:<event id>`).
+
 #### Expected Relay Response
 
 The relay endpoint should respond with HTTP 200 and JSON body:
@@ -111,7 +142,7 @@ Every text message the bot receives is stored in the `bot_commands` table and lo
 - `receivedAtUtc` (when the API got the message) and `sentAtUtc` (when Telegram says the user sent it)
 - `chatId`, `chatType`, `userId`, `username`, `userFullName`, `messageId`
 - `text` (the full message) and `command` (lower-cased, without `@botname`, e.g. `/open_gate`; `null` for plain text)
-- `outcome`: `success`, `failed` (the relay said no or was unreachable, or the command had bad arguments), `error`
+- `outcome`: `success`, `failed` (the relay said no or was unreachable, the command had bad arguments, or the alert was already decided), `error`
   (unexpected exception), `denied` (the user isn't allowed to run it) or `ignored` (plain text or an unknown command)
 - `resultMessage`, `relayStatusCode`, `durationMs`
 
@@ -185,11 +216,13 @@ The first two are read-only and share the API, date range, page size and auto-re
 page. The Access tab is for admins only (see [Access control](#access-control)) and only works when the page is opened
 from the API, not from disk.
 
-- **Table:** received time (in your local time), camera time, plate, direction, list, camera and server, newest first.
+- **Table:** received time (in your local time), camera time, plate, direction, list, camera, server and decision
+  ("✓ Granted by @bob" / "✕ Denied by @bob" from the [Telegram alert](#plate-alerts), or "No decision"), newest first.
 - **Filters:** plate (matches any part), camera ID, received from/to, and page size, with pagination.
 - **Refresh:** a Refresh button, plus auto-refresh every 3–60 s (on by default). Auto-refresh pauses while the tab is
   hidden or a detail view is open, and refreshes as soon as you come back. New events are briefly highlighted.
-- **Details:** click a row to see every field and the raw JSON exactly as received, with a Copy button.
+- **Details:** click a row to see every field and the raw JSON exactly as received, with a Copy button. Undecided
+  plate events also have a **Resend Telegram alert** button (admins signed in on the Access tab only).
 - **Bot commands tab:** received time, user, chat ID, message, outcome (colored), relay result and duration, filterable
   by user, command and outcome. Click a row to see every stored field and the full message text.
 
@@ -199,7 +232,10 @@ browser blocks the requests. The page has an API field for when the service isn'
 ## API
 
 ### `POST /api/events/plate`
-- `200 {"status":"ok","id":"<guid>"}`: the event was stored.
+- `200 {"status":"ok","id":"<guid>"}`: the event was stored (and a [Telegram alert](#plate-alerts) is sent if the bot is on).
+- `200 {"status":"duplicate","id":"<guid of the first event>"}`: the same plate from the same camera was already
+  received within `PlateEvents__DuplicateWindowSeconds`. Nothing is stored, logged or sent. Plates are compared
+  ignoring case, spaces and dashes; the camera is `camera.id`, or `camera.name` if there's no id.
 - `400 {"status":"error","error":"..."}`: the body is empty or not valid JSON, or `plate.text` is missing.
 - `401`: `API_KEY` is set and the `X-Api-Key` header is missing or wrong.
 
@@ -216,7 +252,7 @@ Parsing is lenient, so differences in the vendor's format are absorbed instead o
   the time is built from the `date` object instead.
 - `receivedAtUtc` is the time this server received the event, in UTC.
 
-Every request's raw body is logged at Debug (category `LprWebhook.RawBody`). Rejected and patched bodies are also logged
+Every request's raw body, except duplicates, is logged at Debug (category `LprWebhook.RawBody`). Rejected and patched bodies are also logged
 at Warning. Each stored event produces one Information line, for example:
 
 ```
@@ -229,9 +265,10 @@ Returns events newest first as `{ page, pageSize, total, items }`.
 - `cameraId` must match exactly.
 - `from` and `to` are ISO-8601 times compared with `receivedAtUtc`. A value with no offset is treated as UTC.
 - `pageSize` defaults to 50, with a maximum of 500.
+- Each item has `decision` (`granted`, `denied` or `null` while undecided) and `decidedBy`.
 
 ### `GET /api/events/{id}`
-Returns every stored field plus `rawJson`, or 404 if the id doesn't exist.
+Returns every stored field plus `rawJson` and `decision`/`decidedBy`/`decidedAtUtc`, or 404 if the id doesn't exist.
 
 ### `GET /api/bot-commands?user=&chatId=&command=&outcome=&from=&to=&page=&pageSize=`
 Returns messages received by the Telegram bot, newest first, as `{ page, pageSize, total, items }`.
@@ -256,6 +293,7 @@ Everything under `/api/access` needs that cookie, and the user must still be an 
 | `PUT` / `DELETE /api/access/users/{id}/permissions/{permission}` | Grant / revoke |
 | `PUT /api/access/users/{id}/role {"role":"admin"\|"user"}` | Promote / demote (owner only) |
 | `GET /api/access/audit?page=&pageSize=` | Permission changes, newest first |
+| `POST /api/access/events/{id}/resend-alert` | Send a plate event's Telegram alert again. `400` if the bot is off or the event is already decided, `404` if it doesn't exist |
 
 Changes return `200 {"status":"ok","message":"..."}`, `403` with `"denied"` if you aren't allowed, or `400` with
 `"invalid"` for bad input (e.g. an unknown permission).
@@ -276,6 +314,7 @@ src/LprWebhook.Api/
   Access/                    AccessService (all role/permission rules + audit), BotPermissions catalog, LoginCodeStore
   Configuration/             TelegramBotOptions (bound from the "TelegramBot" section)
   Services/                  TelegramBotService (long polling, logging), BotCommandHandler (one method per command),
+                             PlateAlertHandler (alert + Open gate/Deny buttons), PlateDeduplicator,
                              RelayService (POST to the relay)
 tests/LprWebhook.Api.Tests/  xUnit tests: parsing, timestamps, AccessService rules, sign-in + admin API end to end
 ```

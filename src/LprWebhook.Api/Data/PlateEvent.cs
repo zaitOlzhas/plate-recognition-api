@@ -28,4 +28,7 @@ public class PlateEvent
     public string? ServerDomainName { get; set; }
 
     public string RawJson { get; set; } = "";
+
+    /// <summary>Granted/denied from the Telegram alert; null while nobody has decided.</summary>
+    public PlateDecision? Decision { get; set; }
 }

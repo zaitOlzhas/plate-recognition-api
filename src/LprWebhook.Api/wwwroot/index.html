@@ -173,10 +173,10 @@
         <thead>
           <tr>
             <th>Received</th><th>Camera time</th><th>Plate</th><th>Direction</th>
-            <th>List</th><th>Camera</th><th>Camera ID</th><th>Server</th>
+            <th>List</th><th>Camera</th><th>Camera ID</th><th>Server</th><th>Decision</th>
           </tr>
         </thead>
-        <tbody id="rows"><tr><td class="empty" colspan="8">Loading…</td></tr></tbody>
+        <tbody id="rows"><tr><td class="empty" colspan="9">Loading…</td></tr></tbody>
       </table>
     </div>
     <div class="table-wrap" data-view="bot" hidden>
@@ -258,6 +258,8 @@
   <div class="dlg-head">
     <h2 id="dlgTitle">Event</h2>
     <span class="spacer"></span>
+    <span id="resendNote" class="muted"></span>
+    <button id="resendAlert" type="button" hidden title="Admins only: sends this event's Open gate / Deny message to Telegram again">Resend Telegram alert</button>
     <button id="dlgClose" type="button" aria-label="Close">Close</button>
   </div>
   <div class="dlg-body">
@@ -277,6 +279,7 @@
     error: $('error'), healthDot: $('healthDot'), healthText: $('healthText'), swagger: $('swagger'),
     dialog: $('dialog'), dlgTitle: $('dlgTitle'), dlgFields: $('dlgFields'), dlgRaw: $('dlgRaw'),
     dlgClose: $('dlgClose'), copyRaw: $('copyRaw'), rawLabel: $('rawLabel'),
+    resendAlert: $('resendAlert'), resendNote: $('resendNote'),
     plate: $('plate'), cameraId: $('cameraId'), user: $('user'), command: $('command'), outcome: $('outcome'),
   };
 
@@ -340,12 +343,25 @@
     return badgeCell(outcome, outcome === 'success' ? 'ok' : outcome === 'failed' || outcome === 'error' || outcome === 'denied' ? 'bad' : '');
   }
 
+  // "✓ Granted by @bob" / "✕ Denied by @bob"; "No decision" while nobody has pressed a Telegram button.
+  function decisionText(decision, by) {
+    if (!decision) return 'No decision';
+    const label = decision === 'granted' ? '✓ Granted' : decision === 'denied' ? '✕ Denied' : decision;
+    return by ? `${label} by ${by}` : label;
+  }
+  function decisionBadge(decision, by) {
+    if (!decision) return td(decisionText(decision), 'muted');
+    const cell = badgeCell(decisionText(decision, by), decision === 'granted' ? 'ok' : 'bad');
+    cell.style.whiteSpace = 'nowrap';
+    return cell;
+  }
+
   // ---------- views (one per tab) ----------
   const views = {
     events: {
       title: 'LPR Events',
       path: '/api/events',
-      tbody: $('rows'), cols: 8,
+      tbody: $('rows'), cols: 9,
       empty: 'No events match the current filters.',
       textInputs: [el.plate, el.cameraId],
       selects: [],
@@ -363,6 +379,7 @@
         td(e.cameraName ? `${e.cameraName}${e.cameraNumber != null ? ' #' + e.cameraNumber : ''}` : show(e.cameraNumber)),
         td(show(e.cameraId), 'mono'),
         td(show(e.serverName)),
+        decisionBadge(e.decision, e.decidedBy),
       ],
       open: openEventDetails,
     },
@@ -544,6 +561,8 @@
     el.rawLabel.textContent = rawLabel;
     el.dlgFields.replaceChildren();
     el.dlgRaw.textContent = '';
+    el.resendAlert.hidden = true;
+    el.resendNote.textContent = '';
     el.dialog.showModal();
     clearTimeout(state.timer); // don't refresh underneath an open dialog
   }
@@ -563,10 +582,15 @@
         ['List', e.listName], ['List description', e.listDescription],
         ['Camera', e.cameraName], ['Camera ID', e.cameraId], ['Camera number', e.cameraNumber], ['Camera index', e.cameraIndex],
         ['Server', e.serverName], ['Server domain', e.serverDomainName],
+        ['Decision', decisionText(e.decision, e.decidedBy)], ['Decided at', e.decidedAtUtc && fmtReceived(e.decidedAtUtc)],
       ]);
       let raw = e.rawJson ?? '';
       try { raw = JSON.stringify(JSON.parse(raw), null, 2); } catch { /* not valid JSON (e.g. repaired body): show as-is */ }
       el.dlgRaw.textContent = raw;
+      // Only undecided events can be resent; the API also checks this and that you're a signed-in admin.
+      el.resendAlert.dataset.id = e.id;
+      el.resendAlert.disabled = false;
+      el.resendAlert.hidden = !!e.decision;
     } catch (err) {
       el.dlgTitle.textContent = 'Could not load event';
       el.dlgRaw.textContent = err.message;
@@ -595,6 +619,19 @@
       if (tr) v.open(tr.dataset.id);
     });
   }
+  el.resendAlert.addEventListener('click', async () => {
+    el.resendAlert.disabled = true;
+    el.resendNote.textContent = 'Sending…';
+    try {
+      const r = await accessApi(`/api/access/events/${encodeURIComponent(el.resendAlert.dataset.id)}/resend-alert`, { method: 'POST' });
+      el.resendNote.textContent = r?.message || 'Sent.';
+    } catch (err) {
+      el.resendNote.textContent = err instanceof SignedOut
+        ? 'Sign in on the Access tab first (send /weblogin to the bot).'
+        : err.message;
+    }
+    el.resendAlert.disabled = false;
+  });
   el.dlgClose.addEventListener('click', () => el.dialog.close());
   el.dialog.addEventListener('click', ev => { if (ev.target === el.dialog) el.dialog.close(); });
   el.dialog.addEventListener('close', scheduleNext);
