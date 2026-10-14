@@ -49,7 +49,7 @@ public class TelegramBotService : IHostedService
 
         var receiverOptions = new ReceiverOptions
         {
-            AllowedUpdates = new[] { UpdateType.Message },
+            AllowedUpdates = new[] { UpdateType.Message, UpdateType.CallbackQuery },
             DropPendingUpdates = true
         };
 
@@ -67,6 +67,7 @@ public class TelegramBotService : IHostedService
         }
 
         _ = SetCommandMenuAsync(_botClient, _cts.Token);
+        _ = SendPlateAlertsAsync(_botClient, _cts.Token);
 
         _logger.LogInformation("Telegram bot started successfully");
         return Task.CompletedTask;
@@ -100,24 +101,21 @@ public class TelegramBotService : IHostedService
         }
     }
 
-    private async Task HandleUpdateAsync(
-        ITelegramBotClient botClient,
-        Update update,
-        CancellationToken ct)
+    private Task HandleUpdateAsync(ITelegramBotClient botClient, Update update, CancellationToken ct) => update switch
     {
-        if (update.Message is not { } message)
-            return;
+        { Message: { Text: not null } message } => HandleMessageAsync(botClient, message, ct),
+        { CallbackQuery: { } query } => HandleCallbackAsync(botClient, query, ct),
+        _ => Task.CompletedTask,
+    };
 
-        if (message.Text is not { } messageText)
-            return;
-
+    private async Task HandleMessageAsync(ITelegramBotClient botClient, Message message, CancellationToken ct)
+    {
+        var messageText = message.Text!;
         var chatId = message.Chat.Id;
-        var username = message.From?.Username ?? "unknown";
-        var stopwatch = Stopwatch.StartNew();
 
         _logger.LogInformation(
             "Received message from {Username} (ChatId={ChatId}): {Message}",
-            username, chatId, messageText);
+            message.From?.Username ?? "unknown", chatId, messageText);
 
         var record = new BotCommandLog
         {
@@ -128,30 +126,68 @@ public class TelegramBotService : IHostedService
             ChatType = message.Chat.Type.ToString(),
             UserId = message.From?.Id,
             Username = message.From?.Username,
-            UserFullName = $"{message.From?.FirstName} {message.From?.LastName}".Trim() is { Length: > 0 } name ? name : null,
+            UserFullName = FullName(message.From),
             MessageId = message.MessageId,
             Text = messageText,
             Command = ParseCommand(messageText),
             Outcome = "ignored",
         };
 
+        await RunAndSaveAsync(record, message.From,
+            services => services.GetRequiredService<BotCommandHandler>().HandleAsync(botClient, message, record, ct),
+            () => botClient.SendMessage(chatId, "An unexpected error occurred. Please try again later.", cancellationToken: ct),
+            ct);
+    }
+
+    /// <summary>A press on a plate alert button. Logged to bot_commands like a typed command.</summary>
+    private async Task HandleCallbackAsync(ITelegramBotClient botClient, CallbackQuery query, CancellationToken ct)
+    {
+        _logger.LogInformation("Received button {Data} from {Username} ({UserId})", query.Data, query.From.Username, query.From.Id);
+
+        var now = DateTime.UtcNow;
+        var record = new BotCommandLog
+        {
+            Id = Guid.CreateVersion7(),
+            ReceivedAtUtc = now,
+            SentAtUtc = now, // Telegram doesn't say when a button was pressed
+            ChatId = query.Message?.Chat.Id ?? query.From.Id,
+            ChatType = query.Message?.Chat.Type.ToString(),
+            UserId = query.From.Id,
+            Username = query.From.Username,
+            UserFullName = FullName(query.From),
+            MessageId = query.Message?.MessageId ?? 0,
+            Text = $"[button] {query.Data}",
+            Outcome = "ignored",
+        };
+
+        await RunAndSaveAsync(record, query.From,
+            services => services.GetRequiredService<PlateAlertHandler>().HandleCallbackAsync(botClient, query, record, ct),
+            () => botClient.AnswerCallbackQuery(query.Id, "An unexpected error occurred. Please try again.", showAlert: true, cancellationToken: ct),
+            ct);
+    }
+
+    /// <summary>Records the sender, runs the handler, and always saves the record, also when the handler throws.</summary>
+    private async Task RunAndSaveAsync(
+        BotCommandLog record, User? from, Func<IServiceProvider, Task> handle, Func<Task> replyError, CancellationToken ct)
+    {
+        var stopwatch = Stopwatch.StartNew();
+
         // Create a scope to resolve scoped services
         using var scope = _serviceProvider.CreateScope();
 
         try
         {
-            if (message.From is { } from)
+            if (from is not null)
             {
                 await scope.ServiceProvider.GetRequiredService<AccessService>()
                     .TouchUserAsync(from.Id, from.Username, record.UserFullName, ct);
             }
 
-            await scope.ServiceProvider.GetRequiredService<BotCommandHandler>()
-                .HandleAsync(botClient, message, record, ct);
+            await handle(scope.ServiceProvider);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error handling {Command} from {Username}", record.Command, username);
+            _logger.LogError(ex, "Error handling {Command} from {Username}", record.Command, record.Username ?? "unknown");
             // Keep the outcome if the command already ran and only the Telegram reply failed.
             if (record.Outcome == "ignored")
                 record.Outcome = "error";
@@ -159,10 +195,7 @@ public class TelegramBotService : IHostedService
 
             try
             {
-                await botClient.SendMessage(
-                    chatId,
-                    "An unexpected error occurred. Please try again later.",
-                    cancellationToken: ct);
+                await replyError();
             }
             catch
             {
@@ -173,6 +206,35 @@ public class TelegramBotService : IHostedService
         record.DurationMs = (int)stopwatch.ElapsedMilliseconds;
         await SaveCommandAsync(scope.ServiceProvider, record);
     }
+
+    private static string? FullName(User? user)
+        => $"{user?.FirstName} {user?.LastName}".Trim() is { Length: > 0 } name ? name : null;
+
+    /// <summary>Sends a Telegram alert for each plate event the webhook stored, one at a time.</summary>
+    private async Task SendPlateAlertsAsync(ITelegramBotClient botClient, CancellationToken ct)
+    {
+        var queue = _serviceProvider.GetRequiredService<PlateAlertQueue>();
+        try
+        {
+            await foreach (var alert in queue.Reader.ReadAllAsync(ct))
+            {
+                try
+                {
+                    using var scope = _serviceProvider.CreateScope();
+                    await scope.ServiceProvider.GetRequiredService<PlateAlertHandler>().SendAsync(botClient, alert, ct);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogError(ex, "Failed to send the Telegram alert for plate event {EventId}", alert.EventId);
+                }
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Shutting down.
+        }
+    }
+
 
     /// <summary>"/Open_Gate@MyBot now" -> "/open_gate"; null if the text isn't a command.</summary>
     private static string? ParseCommand(string text)

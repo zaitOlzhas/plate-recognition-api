@@ -3,6 +3,7 @@ using System.Text;
 using LprWebhook.Api.Contracts;
 using LprWebhook.Api.Data;
 using LprWebhook.Api.Parsing;
+using LprWebhook.Api.Services;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -35,6 +36,8 @@ public static class EventEndpoints
         EventsDbContext db,
         IConfiguration config,
         ILoggerFactory loggerFactory,
+        PlateDeduplicator deduplicator,
+        [FromServices] PlateAlertQueue? alerts,
         CancellationToken ct)
     {
         if (!IsAuthorized(config["API_KEY"], apiKey))
@@ -45,7 +48,6 @@ public static class EventEndpoints
 
         using var reader = new StreamReader(request.Body, Encoding.UTF8);
         var body = await reader.ReadToEndAsync(ct);
-        rawLogger.LogDebug("Raw webhook body ({ContentType}): {RawBody}", request.ContentType, body);
 
         var result = PayloadParser.Parse(body);
         if (!result.Success)
@@ -53,18 +55,27 @@ public static class EventEndpoints
             logger.LogWarning("Rejected webhook ({Error}) Raw body: {RawBody}", result.Error, body);
             return TypedResults.BadRequest(ErrorResponse.Of(result.Error!));
         }
+
+        var p = result.Payload!;
+        var plateText = p.Plate!.Text!.Trim();
+        var id = Guid.CreateVersion7();
+        // Repeats are answered 200 so the camera doesn't retry, but are not stored or logged.
+        var dedupKey = PlateDeduplicator.Key(p.Camera?.Id ?? p.Camera?.Name, plateText);
+        if (!deduplicator.TryAccept(dedupKey, id, out var originalId))
+            return TypedResults.Ok(new ReceivedResponse("duplicate", originalId));
+
+        rawLogger.LogDebug("Raw webhook body ({ContentType}): {RawBody}", request.ContentType, body);
         if (result.Repaired)
             logger.LogWarning("Webhook body had empty values and was repaired before parsing. Raw body: {RawBody}", body);
 
-        var p = result.Payload!;
         var entity = new PlateEvent
         {
-            Id = Guid.CreateVersion7(),
+            Id = id,
             ReceivedAtUtc = DateTime.UtcNow,
             CameraTime = CameraTimestamp.Resolve(p.Timestamp, p.Date),
             RawTimestamp = p.Timestamp,
             EventType = p.Event,
-            PlateText = p.Plate!.Text!.Trim(),
+            PlateText = plateText,
             PlateDirection = p.Plate.Direction,
             PlateDescription = p.Plate.Description,
             PlateListName = p.Plate.List?.Name,
@@ -79,7 +90,18 @@ public static class EventEndpoints
         };
 
         db.PlateEvents.Add(entity);
-        await db.SaveChangesAsync(ct);
+        try
+        {
+            await db.SaveChangesAsync(ct);
+        }
+        catch
+        {
+            // Not stored, so the camera's next try must not be dropped as a repeat of it.
+            deduplicator.Forget(dedupKey, id);
+            throw;
+        }
+
+        alerts?.Enqueue(PlateAlert.From(entity));
 
         logger.LogInformation(
             "Plate event {EventId}: plate={Plate} camera={CameraName} ({CameraId}) direction={Direction} list={ListName} cameraTime={CameraTime}",
@@ -119,7 +141,8 @@ public static class EventEndpoints
             .Take(size)
             .Select(e => new PlateEventSummary(
                 e.Id, e.ReceivedAtUtc, e.CameraTime, e.EventType, e.PlateText, e.PlateDirection,
-                e.PlateListName, e.CameraId, e.CameraName, e.CameraNumber, e.ServerName))
+                e.PlateListName, e.CameraId, e.CameraName, e.CameraNumber, e.ServerName,
+                e.Decision!.Status, e.Decision.DecidedByName))
             .ToListAsync(ct);
 
         return TypedResults.Ok(new PagedResponse<PlateEventSummary>(pageNo, size, total, items));
@@ -127,13 +150,14 @@ public static class EventEndpoints
 
     private static async Task<Results<Ok<PlateEventDetails>, NotFound>> GetAsync(Guid id, EventsDbContext db, CancellationToken ct)
     {
-        var e = await db.PlateEvents.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, ct);
+        var e = await db.PlateEvents.AsNoTracking().Include(x => x.Decision).FirstOrDefaultAsync(x => x.Id == id, ct);
         if (e is null) return TypedResults.NotFound();
 
         return TypedResults.Ok(new PlateEventDetails(
             e.Id, e.ReceivedAtUtc, e.CameraTime, e.RawTimestamp, e.EventType, e.PlateText, e.PlateDirection,
             e.PlateDescription, e.PlateListName, e.PlateListDescription, e.CameraId, e.CameraName,
-            e.CameraNumber, e.CameraIndex, e.ServerName, e.ServerDomainName, e.RawJson));
+            e.CameraNumber, e.CameraIndex, e.ServerName, e.ServerDomainName, e.RawJson,
+            e.Decision?.Status, e.Decision?.DecidedByName, e.Decision?.DecidedAtUtc));
     }
 
     private static bool IsAuthorized(string? expected, string? provided)

@@ -10,6 +10,8 @@ public class EventsDbContext(DbContextOptions<EventsDbContext> options) : DbCont
     public DbSet<BotUser> BotUsers => Set<BotUser>();
     public DbSet<UserPermission> UserPermissions => Set<UserPermission>();
     public DbSet<PermissionAudit> PermissionAudit => Set<PermissionAudit>();
+    public DbSet<PlateDecision> PlateDecisions => Set<PlateDecision>();
+    public DbSet<PlateAlertMessage> PlateAlertMessages => Set<PlateAlertMessage>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -24,6 +26,20 @@ public class EventsDbContext(DbContextOptions<EventsDbContext> options) : DbCont
         e.HasIndex(x => x.ReceivedAtUtc);
         e.HasIndex(x => x.PlateText);
         e.HasIndex(x => x.CameraId);
+        e.HasOne(x => x.Decision).WithOne().HasForeignKey<PlateDecision>(x => x.EventId);
+
+        var d = modelBuilder.Entity<PlateDecision>();
+        d.ToTable("plate_decisions");
+        d.HasKey(x => x.EventId);
+        d.Property(x => x.Status).IsRequired();
+        d.Property(x => x.DecidedAtUtc).HasConversion(v => v, v => DateTime.SpecifyKind(v, DateTimeKind.Utc));
+
+        var m = modelBuilder.Entity<PlateAlertMessage>();
+        m.ToTable("plate_alert_messages");
+        // An event can be alerted more than once to the same chat (resend from the web viewer).
+        m.HasKey(x => new { x.ChatId, x.MessageId });
+        m.HasIndex(x => x.EventId);
+        m.Property(x => x.SentAtUtc).HasConversion(v => v, v => DateTime.SpecifyKind(v, DateTimeKind.Utc));
 
         var c = modelBuilder.Entity<BotCommandLog>();
         c.ToTable("bot_commands");
