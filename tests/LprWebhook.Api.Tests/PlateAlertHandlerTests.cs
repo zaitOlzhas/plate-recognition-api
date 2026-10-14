@@ -154,13 +154,20 @@ public sealed class PlateAlertHandlerTests : IDisposable
         => Assert.False(PlateAlertHandler.TryParse(data, out _, out _));
 
     [Fact]
-    public void Alert_text_shows_bold_plate_then_time_then_camera()
+    public void Alert_text_sets_the_plate_apart_then_shows_time_and_camera()
     {
         var alert = new PlateAlert(_eventId, "123ABC02", "Gate Entrance", new DateTime(2026, 10, 5, 14, 23, 7, 512), DateTime.UtcNow);
+        var text = PlateAlertHandler.Format(alert);
 
-        Assert.Equal("123ABC02\n2026-10-05 14:23:07\nCamera: Gate Entrance", PlateAlertHandler.Format(alert));
-        var bold = Assert.Single(PlateAlertHandler.PlateBold(alert));
-        Assert.Equal(MessageEntityType.Bold, bold.Type);
-        Assert.Equal((0, 8), (bold.Offset, bold.Length));
+        Assert.Equal("🚗 123ABC02\n\n2026-10-05 14:23:07\nCamera: Gate Entrance", text);
+        var entities = PlateAlertHandler.PlateEntities(alert);
+        Assert.Equal("🚗 123ABC02", Covered(MessageEntityType.Blockquote));
+        Assert.Equal("123ABC02", Covered(MessageEntityType.Bold));
+
+        string Covered(MessageEntityType type)
+        {
+            var e = Assert.Single(entities, x => x.Type == type);
+            return text.Substring(e.Offset, e.Length);
+        }
     }
 }

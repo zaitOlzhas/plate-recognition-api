@@ -47,7 +47,7 @@ public class PlateAlertHandler(
             },
         });
         var text = Format(alert);
-        var entities = PlateBold(alert);
+        var entities = PlateEntities(alert);
 
         var sent = 0;
         foreach (var (chatId, canOpenGate) in recipients)
@@ -175,7 +175,7 @@ public class PlateAlertHandler(
             try
             {
                 // No replyMarkup: removes the buttons.
-                await bot.EditMessageText(t.ChatId, t.MessageId, text, entities: PlateBold(alert), cancellationToken: ct);
+                await bot.EditMessageText(t.ChatId, t.MessageId, text, entities: PlateEntities(alert), cancellationToken: ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -185,22 +185,30 @@ public class PlateAlertHandler(
         }
     }
 
-    /// <summary>Plate on the first line (made bold by <see cref="PlateBold"/>), then the time, then the camera.</summary>
+    private const string PlateMarker = "🚗 ";
+
+    /// <summary>
+    /// The plate line first (styled by <see cref="PlateEntities"/>), an empty line, then the time and the camera.
+    /// </summary>
     public static string Format(PlateAlert a)
     {
         var time = a.CameraTime is { } t
             ? t.ToString("yyyy-MM-dd HH:mm:ss")
             : a.ReceivedAtUtc.ToString("yyyy-MM-dd HH:mm:ss") + " UTC";
-        var text = $"{a.Plate}\n{time}\nCamera: {a.Camera ?? "unknown"}";
+        var text = $"{PlateMarker}{a.Plate}\n\n{time}\nCamera: {a.Camera ?? "unknown"}";
         return a.ResentBy is null ? text : $"{text}\n\nResent by {a.ResentBy}";
     }
 
     /// <summary>
-    /// Bolds the plate at the start of <see cref="Format"/>'s text. An entity instead of a parse mode, so plate or
-    /// camera names never need escaping. Telegram has no font sizes; bold is as prominent as text gets.
+    /// Sets the plate line of <see cref="Format"/>'s text apart: a blockquote (colored bar and tinted background) around
+    /// it and the plate in bold. Telegram has no font sizes, so this is as prominent as text gets. Entities instead of
+    /// a parse mode, so plate or camera names never need escaping; offsets are UTF-16 units, like .NET strings.
     /// </summary>
-    public static MessageEntity[] PlateBold(PlateAlert a)
-        => [new MessageEntity { Type = MessageEntityType.Bold, Offset = 0, Length = a.Plate.Length }];
+    public static MessageEntity[] PlateEntities(PlateAlert a) =>
+    [
+        new MessageEntity { Type = MessageEntityType.Blockquote, Offset = 0, Length = PlateMarker.Length + a.Plate.Length },
+        new MessageEntity { Type = MessageEntityType.Bold, Offset = PlateMarker.Length, Length = a.Plate.Length },
+    ];
 
     private static string AlreadyDecided(PlateDecision d)
         => $"Already {d.Status} by {d.DecidedByName ?? d.DecidedByUserId.ToString()}.";
