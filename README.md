@@ -220,8 +220,8 @@ Commands sent in a group as `/open_gate@YourBot` work the same way.
 
 Every plate event that is stored (repeats are not, see `PlateEvents__DuplicateWindowSeconds`) is sent as a message
 to everyone the bot knows: the owner and every user who has messaged the bot or was added by ID. It goes to their
-private chat with the bot, so they must have started the bot at least once. Everyone sees the event, but only people
-who may use `/open_gate` (the owner, admins and users granted `open_gate`) get the buttons:
+private chat with the bot, so they must have started the bot at least once. Everyone sees the event, but only the
+owner and admins get the buttons (users granted `open_gate` can still use the `/open_gate` command):
 
 ```
 123ABC02                  ← bold
@@ -238,7 +238,8 @@ camera time; if the camera didn't send a usable one, it's the time the API recei
 - **Отклонить** (Deny) only marks the event `denied`.
 - The first press decides for everybody: every copy of the alert, including those sent without buttons, shows who decided
   ("✅ Gate opened by @bob" / "⛔ Denied by @bob"). A later press on a stale copy answers "Already granted by @bob".
-- Someone whose `open_gate` permission was revoked after the alert went out gets "Not allowed".
+- Only admins can decide: a non-admin pressing a button (e.g. on an older alert, or after being demoted) gets
+  "Только администраторы могут открывать шлагбаум или отклонять въезд по уведомлению."
 - **Resend:** a signed-in admin can click **Resend** on any plate event row in the viewer (or **Resend Telegram alert**
   in its details). Everyone gets another message for the same event, ending in "Resent by @admin". The earlier copies
   keep working, and whichever button is pressed first decides and updates every copy. Resending an event that was

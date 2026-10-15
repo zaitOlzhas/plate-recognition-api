@@ -14,7 +14,7 @@ public sealed record PlateDecisionResult(string Outcome, string Message, PlateEv
 }
 
 /// <summary>
-/// Telegram alerts for new plate events. Every known user gets one; only those who may use /open_gate get the
+/// Telegram alerts for new plate events. Every known user gets one; only admins (and the owner) get the
 /// "Open gate" / "Deny" buttons. The first press decides for everybody and every copy of the alert (with or without
 /// buttons) is updated to show who decided.
 /// </summary>
@@ -29,7 +29,7 @@ public class PlateAlertHandler(
 
     public async Task SendAsync(ITelegramBotClient bot, PlateAlert alert, CancellationToken ct)
     {
-        var recipients = await access.ListUsersWithPermissionAsync(BotPermissions.OpenGate, ct);
+        var recipients = await access.ListAlertRecipientsAsync(ct);
         if (recipients.Count == 0)
         {
             logger.LogWarning("The bot knows no users, so no Telegram alert was sent for plate event {EventId}", alert.EventId);
@@ -50,12 +50,12 @@ public class PlateAlertHandler(
         var entities = PlateBold(alert);
 
         var sent = 0;
-        foreach (var (chatId, canOpenGate) in recipients)
+        foreach (var (chatId, isAdmin) in recipients)
         {
             try
             {
-                // A private chat's ID is the user's ID. Users without open_gate see the event but get no buttons.
-                var message = await bot.SendMessage(chatId, text, entities: entities, replyMarkup: canOpenGate ? keyboard : null, cancellationToken: ct);
+                // A private chat's ID is the user's ID. Non-admins see the event but get no buttons.
+                var message = await bot.SendMessage(chatId, text, entities: entities, replyMarkup: isAdmin ? keyboard : null, cancellationToken: ct);
                 db.PlateAlertMessages.Add(new PlateAlertMessage
                 {
                     EventId = alert.EventId, ChatId = chatId, MessageId = message.MessageId, SentAtUtc = DateTime.UtcNow,
@@ -70,8 +70,8 @@ public class PlateAlertHandler(
         }
 
         await db.SaveChangesAsync(CancellationToken.None);
-        logger.LogInformation("Plate alert {EventId} ({Plate}) sent to {Sent} of {Total} recipients ({WithButtons} may open the gate)",
-            alert.EventId, alert.Plate, sent, recipients.Count, recipients.Count(r => r.Allowed));
+        logger.LogInformation("Plate alert {EventId} ({Plate}) sent to {Sent} of {Total} recipients ({WithButtons} admins with buttons)",
+            alert.EventId, alert.Plate, sent, recipients.Count, recipients.Count(r => r.IsAdmin));
     }
 
     /// <summary>A press on an alert button. Sets the outcome on <paramref name="record"/>; TelegramBotService saves it.</summary>
@@ -104,10 +104,11 @@ public class PlateAlertHandler(
     /// </summary>
     public async Task<PlateDecisionResult> DecideAsync(Guid eventId, string status, Actor actor, CancellationToken ct)
     {
-        if (!await access.CanUseAsync(actor.UserId, BotPermissions.OpenGate, ct))
+        // Buttons are admin-only; this also covers older alerts that still show buttons to users granted open_gate.
+        if (!await access.IsAdminAsync(actor.UserId, ct))
         {
             logger.LogWarning("Denied plate decision {Status} for {EventId} by {UserId}", status, eventId, actor.UserId);
-            return new("denied", $"Нет доступа. Ваш Telegram ID: {actor.UserId} — отправьте его администратору, чтобы он выдал доступ.");
+            return new("denied", "Только администраторы могут открывать шлагбаум или отклонять въезд по уведомлению.");
         }
 
         var ev = await db.PlateEvents.Include(e => e.Decision).FirstOrDefaultAsync(e => e.Id == eventId, ct);
