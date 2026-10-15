@@ -89,7 +89,7 @@ public sealed class PlateAlertHandlerTests : IDisposable
         var second = await _handler.DecideAsync(_eventId, PlateDecisionStatus.Granted, new Actor(GateUserId, "@gate"), default);
 
         Assert.Equal("failed", second.Outcome);
-        Assert.Equal("Already denied by @owner.", second.Message);
+        Assert.Equal("Уже отклонено пользователем @owner.", second.Message);
         Assert.Equal(0, _relay.Calls);
         Assert.Equal(PlateDecisionStatus.Denied, (await StoredDecisionAsync())!.Status);
     }

@@ -55,7 +55,7 @@ public class BotCommandHandler(
                 await WebLoginAsync(bot, message, record, userId, ct);
                 break;
             default:
-                await ReplyAsync(bot, record, "Unknown command. Send /help to see what you can do.", ct);
+                await ReplyAsync(bot, record, "Неизвестная команда. Отправьте /help, чтобы увидеть доступные команды.", ct);
                 break; // stays "ignored"
         }
     }
@@ -103,7 +103,7 @@ public class BotCommandHandler(
     {
         if (!await access.CanUseAsync(userId, BotPermissions.OpenGate, ct))
         {
-            await DenyAsync(bot, record, $"Not allowed. Your Telegram ID is {userId} - send it to an admin so they can give you access.", ct);
+            await DenyAsync(bot, record, $"Нет доступа. Ваш Telegram ID: {userId} — отправьте его администратору, чтобы он выдал доступ.", ct);
             return;
         }
 
@@ -121,7 +121,7 @@ public class BotCommandHandler(
             logger.LogWarning("Failed to open gate for {Username}: {Error}", record.Username, result.Message);
 
         await bot.SendMessage(record.ChatId,
-            result.Success ? $"Gate opened successfully!\n\n{result.Message}" : $"Failed to open gate\n\n{result.Message}",
+            result.Success ? "Шлагбаум успешно открыт" :$"Не удалось открыть шлагбаум\n\n{result.Message}",
             cancellationToken: ct);
     }
 
@@ -129,7 +129,7 @@ public class BotCommandHandler(
     {
         if (!await access.IsAdminAsync(userId, ct))
         {
-            await DenyAsync(bot, record, "Only admins can list users.", ct);
+            await DenyAsync(bot, record, "Только администраторы могут просматривать список пользователей.", ct);
             return;
         }
 
@@ -152,12 +152,12 @@ public class BotCommandHandler(
     {
         if (!await access.IsAdminAsync(actor.UserId, ct))
         {
-            await DenyAsync(bot, record, "Only admins can change permissions.", ct);
+            await DenyAsync(bot, record, "Только администраторы могут изменять права.", ct);
             return;
         }
         if (args.Length != 2)
         {
-            await InvalidAsync(bot, record, $"Usage: {record.Command} <@user|id> <permission>\nPermissions: {string.Join(", ", BotPermissions.All.Select(p => p.Key))}", ct);
+            await InvalidAsync(bot, record, $"Использование: {record.Command} <@user|id> <право>\nПрава: {string.Join(", ", BotPermissions.All.Select(p => p.Key))}", ct);
             return;
         }
         if (await access.ResolveUserIdAsync(args[0], ct) is not { } targetId)
@@ -177,12 +177,12 @@ public class BotCommandHandler(
     {
         if (!access.IsOwner(actor.UserId))
         {
-            await DenyAsync(bot, record, "Only the owner can promote or demote admins.", ct);
+            await DenyAsync(bot, record, "Только владелец может назначать и снимать администраторов.", ct);
             return;
         }
         if (args.Length != 1)
         {
-            await InvalidAsync(bot, record, $"Usage: {record.Command} <@user|id>", ct);
+            await InvalidAsync(bot, record, $"Использование: {record.Command} <@user|id>", ct);
             return;
         }
         if (await access.ResolveUserIdAsync(args[0], ct) is not { } targetId)
@@ -199,13 +199,13 @@ public class BotCommandHandler(
     {
         if (!await access.IsAdminAsync(userId, ct))
         {
-            await DenyAsync(bot, record, "Only admins can sign in to the web Access page.", ct);
+            await DenyAsync(bot, record, "Только администраторы могут входить на веб-страницу Access.", ct);
             return;
         }
         // Anyone in a group chat could use a link posted there.
         if (message.Chat.Type != ChatType.Private)
         {
-            await InvalidAsync(bot, record, "Send /weblogin in a private chat with the bot, not in a group.", ct);
+            await InvalidAsync(bot, record, "Отправьте /weblogin в личном чате с ботом, а не в группе.", ct);
             return;
         }
 
@@ -222,7 +222,7 @@ public class BotCommandHandler(
     }
 
     private static string UnknownUserMessage(string token)
-        => $"I don't know {token}. Use their numeric Telegram ID, or ask them to message this bot first so their @username is known.";
+        => $"Пользователь {token} неизвестен. Укажите его числовой Telegram ID или попросите его сначала написать боту, чтобы бот узнал его @username.";
 
     private async Task ReplyWithResultAsync(ITelegramBotClient bot, BotCommandLog record, AccessResult result, CancellationToken ct)
     {

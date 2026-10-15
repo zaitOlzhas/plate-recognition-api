@@ -116,12 +116,12 @@ public class AccessService(EventsDbContext db, IOptions<TelegramBotOptions> opti
 
         AccessResult result;
         if (!await IsAdminAsync(actor.UserId, ct))
-            result = AccessResult.Denied("Only admins can change permissions.");
+            result = AccessResult.Denied("Только администраторы могут изменять права.");
         else if (perm is null)
             result = AccessResult.Invalid(
-                $"Unknown permission \"{permission}\". Available: {string.Join(", ", BotPermissions.All.Select(p => p.Key))}.");
+                $"Неизвестное право \"{permission}\". Доступные: {string.Join(", ", BotPermissions.All.Select(p => p.Key))}.");
         else if (await IsAdminAsync(targetId, ct))
-            result = AccessResult.Invalid($"{targetName} is an admin and can already use every command.");
+            result = AccessResult.Invalid($"{targetName} — администратор и уже может использовать все команды.");
         else
         {
             target ??= AddUserRow(targetId, actor.UserId);
@@ -162,11 +162,11 @@ public class AccessService(EventsDbContext db, IOptions<TelegramBotOptions> opti
 
         AccessResult result;
         if (!IsOwner(actor.UserId))
-            result = AccessResult.Denied("Only the owner can promote or demote admins.");
+            result = AccessResult.Denied("Только владелец может назначать и снимать администраторов.");
         else if (role is not (Roles.Admin or Roles.User))
-            result = AccessResult.Invalid($"Unknown role \"{role}\". Use \"admin\" or \"user\".");
+            result = AccessResult.Invalid($"Неизвестная роль \"{role}\". Используйте \"admin\" или \"user\".");
         else if (IsOwner(targetId))
-            result = AccessResult.Invalid("The owner's role can't be changed.");
+            result = AccessResult.Invalid("Роль владельца изменить нельзя.");
         else
         {
             target ??= AddUserRow(targetId, actor.UserId);
@@ -194,9 +194,9 @@ public class AccessService(EventsDbContext db, IOptions<TelegramBotOptions> opti
 
         AccessResult result;
         if (!await IsAdminAsync(actor.UserId, ct))
-            result = AccessResult.Denied("Only admins can add users.");
+            result = AccessResult.Denied("Только администраторы могут добавлять пользователей.");
         else if (targetId <= 0)
-            result = AccessResult.Invalid("A Telegram user ID is a positive number.");
+            result = AccessResult.Invalid("Telegram ID пользователя должен быть положительным числом.");
         else if (target is not null || IsOwner(targetId))
             result = AccessResult.Ok($"{targetName} is already known. No change.");
         else

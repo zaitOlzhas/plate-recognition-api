@@ -42,8 +42,8 @@ public class PlateAlertHandler(
         {
             new[]
             {
-                InlineKeyboardButton.WithCallbackData("Open gate", $"{OpenAction}:{id}"),
-                InlineKeyboardButton.WithCallbackData("Deny", $"{DenyAction}:{id}"),
+                InlineKeyboardButton.WithCallbackData("Открыть шлагбаум", $"{OpenAction}:{id}"),
+                InlineKeyboardButton.WithCallbackData("Отклонить", $"{DenyAction}:{id}"),
             },
         });
         var text = Format(alert);
@@ -79,8 +79,8 @@ public class PlateAlertHandler(
     {
         if (!TryParse(query.Data, out var action, out var eventId))
         {
-            record.ResultMessage = "Unknown button";
-            await bot.AnswerCallbackQuery(query.Id, "Unknown button.", cancellationToken: ct);
+            record.ResultMessage = "Неизвестная кнопка";
+            await bot.AnswerCallbackQuery(query.Id, "Неизвестная кнопка.", cancellationToken: ct);
             return; // stays "ignored"
         }
 
@@ -107,12 +107,12 @@ public class PlateAlertHandler(
         if (!await access.CanUseAsync(actor.UserId, BotPermissions.OpenGate, ct))
         {
             logger.LogWarning("Denied plate decision {Status} for {EventId} by {UserId}", status, eventId, actor.UserId);
-            return new("denied", $"Not allowed. Your Telegram ID is {actor.UserId} - send it to an admin so they can give you access.");
+            return new("denied", $"Нет доступа. Ваш Telegram ID: {actor.UserId} — отправьте его администратору, чтобы он выдал доступ.");
         }
 
         var ev = await db.PlateEvents.Include(e => e.Decision).FirstOrDefaultAsync(e => e.Id == eventId, ct);
         if (ev is null)
-            return new("failed", "This plate event no longer exists.");
+            return new("failed", "Это событие больше не существует.");
         if (ev.Decision is not null)
             return new("failed", AlreadyDecided(ev.Decision), ev);
 
@@ -131,7 +131,7 @@ public class PlateAlertHandler(
             // Someone else pressed a button at the same moment and their row got in first.
             db.ChangeTracker.Clear();
             ev = await db.PlateEvents.AsNoTracking().Include(e => e.Decision).FirstAsync(e => e.Id == eventId, ct);
-            return new("failed", ev.Decision is null ? "Please try again." : AlreadyDecided(ev.Decision), ev);
+            return new("failed", ev.Decision is null ? "Попробуйте ещё раз." : AlreadyDecided(ev.Decision), ev);
         }
 
         if (status == PlateDecisionStatus.Denied)
@@ -147,7 +147,7 @@ public class PlateAlertHandler(
             logger.LogWarning("Failed to open gate for plate event {EventId} ({Plate}): {Error}", eventId, ev.PlateText, relayResult.Message);
             db.PlateDecisions.Remove(decision);
             await db.SaveChangesAsync(CancellationToken.None);
-            return new("failed", $"Failed to open gate: {relayResult.Message}", null, relayStatus);
+            return new("failed", $"Не удалось открыть шлагбаум: {relayResult.Message}", null, relayStatus);
         }
 
         logger.LogInformation("Gate opened for plate event {EventId} ({Plate}) by {Actor}", eventId, ev.PlateText, actor.Name);
@@ -203,7 +203,7 @@ public class PlateAlertHandler(
         => [new MessageEntity { Type = MessageEntityType.Bold, Offset = 0, Length = a.Plate.Length }];
 
     private static string AlreadyDecided(PlateDecision d)
-        => $"Already {d.Status} by {d.DecidedByName ?? d.DecidedByUserId.ToString()}.";
+        => $"{(d.Status == PlateDecisionStatus.Granted ? "Уже открыто" : "Уже отклонено")} пользователем {d.DecidedByName ?? d.DecidedByUserId.ToString()}.";
 
     /// <summary>"open:&lt;guid&gt;" or "deny:&lt;guid&gt;".</summary>
     public static bool TryParse(string? data, out string action, out Guid eventId)

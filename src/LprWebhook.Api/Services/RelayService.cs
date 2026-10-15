@@ -39,7 +39,7 @@ public class RelayService : IRelayService
             {
                 return new RelayResult(
                     false,
-                    $"Relay responded with {response.StatusCode}",
+                    $"Реле ответило с кодом {(int)response.StatusCode} ({response.StatusCode})",
                     (int)response.StatusCode);
             }
 
@@ -55,30 +55,30 @@ public class RelayService : IRelayService
                     return new RelayResult(true, message ?? "Gate triggered successfully", 200);
                 }
 
-                return new RelayResult(false, $"Unexpected status: {status}", 200);
+                return new RelayResult(false, $"Неожиданный статус реле: {status}", 200);
             }
             catch (JsonException)
             {
                 return new RelayResult(
                     false,
-                    "Relay response was not in expected JSON format",
+                    "Ответ реле не в ожидаемом формате JSON",
                     200);
             }
         }
         catch (HttpRequestException ex)
         {
             _logger.LogError(ex, "Failed to connect to relay at {Url}", url);
-            return new RelayResult(false, $"Connection error: {ex.Message}");
+            return new RelayResult(false, $"Ошибка подключения к реле: {ex.Message}");
         }
         catch (TaskCanceledException ex)
         {
             _logger.LogWarning(ex, "Relay request timed out");
-            return new RelayResult(false, "Request timed out");
+            return new RelayResult(false, "Реле не ответило вовремя");
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Unexpected error triggering relay");
-            return new RelayResult(false, $"Error: {ex.Message}");
+            return new RelayResult(false, $"Ошибка: {ex.Message}");
         }
     }
 }

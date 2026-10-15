@@ -3,6 +3,102 @@
 A small ASP.NET Core (.NET 10) minimal API that receives `plate_recognized` webhooks from a license plate
 recognition (LPR) system. It logs each event and stores it in SQLite so you can inspect it later.
 
+## Установка на сервер (кратко, на русском)
+
+API работает в Docker-контейнере. На сервере нужны только **Git** (чтобы скачать проект) и **Docker** (чтобы его
+запустить); .NET ставить не нужно — готовый образ берётся из `ghcr.io/zaitolzhas/lpr-webhook-api`.
+
+### 1. Установить Git и Docker
+
+**Linux (Ubuntu/Debian):**
+
+```sh
+sudo apt update && sudo apt install -y git curl
+curl -fsSL https://get.docker.com | sudo sh     # Docker Engine + плагин docker compose
+sudo usermod -aG docker $USER                   # чтобы запускать docker без sudo; затем перелогиньтесь
+docker --version && docker compose version      # проверка
+```
+
+**Windows (10/11 или Server с WSL2):**
+
+```powershell
+winget install --id Git.Git -e
+winget install --id Docker.DockerDesktop -e
+```
+
+После установки перезагрузите компьютер и один раз запустите Docker Desktop (он попросит включить WSL2). В настройках
+Docker Desktop включите *Start Docker Desktop when you sign in*, чтобы API поднимался после перезагрузки.
+
+### 2. Скачать проект и запустить
+
+**Windows, в один клик:** скачайте
+[`deploy.bat`](https://raw.githubusercontent.com/zaitOlzhas/plate-recognition-api/main/deploy.bat) в любую папку
+(например `C:\lpr`) и запустите двойным щелчком. Он скачает проект, при первом запуске создаст `.env` и откроет его в
+Блокноте — заполните переменные (см. таблицу ниже), сохраните и закройте Блокнот. Дальше скрипт сам скачает образ,
+запустит контейнер и откроет страницу событий. Для обновления просто запустите `deploy.bat` ещё раз.
+
+**Linux (или Windows вручную):**
+
+```sh
+git clone https://github.com/zaitOlzhas/plate-recognition-api.git
+cd plate-recognition-api
+nano .env                                        # создайте файл с настройками (пример ниже)
+docker compose pull && docker compose up -d --no-build
+docker compose ps                                # через ~30 с статус должен стать "healthy"
+```
+
+Пример `.env` (файл лежит рядом с `docker-compose.yml`, в git его не коммитить):
+
+```env
+LPR_IMAGE=ghcr.io/zaitolzhas/lpr-webhook-api:latest
+API_KEY=придумайте-длинный-ключ
+
+TELEGRAM_BOT_ENABLED=true
+TELEGRAM_BOT_TOKEN=1234567890:ABCdefGHIjklMNOpqrsTUVwxyz
+TELEGRAM_OWNER_ID=123456789
+WEB_PUBLIC_URL=http://192.168.1.50:5080
+RELAY_BASE_URL=http://192.168.1.10
+RELAY_ENDPOINT=out1_pulse
+```
+
+### 3. Проверить и подключить камеру
+
+- Страница событий: `http://<IP-сервера>:5080/`, проверка здоровья: `http://<IP-сервера>:5080/health` → `Healthy`.
+- В LPR-системе укажите адрес вебхука `http://<IP-сервера>:5080/api/events/plate` и, если задан `API_KEY`,
+  заголовок `X-Api-Key: <значение API_KEY>`.
+- Порт **5080** должен быть открыт в файрволе сервера (Linux: `sudo ufw allow 5080/tcp`).
+
+Полезные команды (из папки проекта):
+
+```sh
+docker compose logs -f lpr-webhook                       # логи
+git pull && docker compose pull && docker compose up -d --no-build   # обновление до последней версии
+docker compose up -d --no-build                          # применить изменения .env (restart их не подхватит)
+```
+
+Данные (база `events.db`) хранятся в Docker-томе `lpr-data` и переживают обновления и перезапуски;
+`docker compose down -v` их **удаляет**.
+
+### Переменные окружения (`.env`)
+
+Обязательных переменных нет: без `.env` API запустится и будет принимать события, но без ключа и без Telegram-бота.
+
+| Переменная | По умолчанию | Что означает |
+|---|---|---|
+| `LPR_IMAGE` | `lpr-webhook-api:latest` | Какой Docker-образ запускать. Укажите `ghcr.io/zaitolzhas/lpr-webhook-api:latest`, чтобы скачивать готовый образ, а не собирать его на сервере. Тег `:sha-1a2b3c4` фиксирует конкретную версию (например, для отката). |
+| `API_KEY` | *(пусто)* | Секретный ключ вебхука. Если задан, LPR-система должна присылать заголовок `X-Api-Key` с этим значением, иначе ответ 401. Пусто — принимаются все запросы. |
+| `SWAGGER_ENABLED` | `true` | Показывать документацию API на `/swagger`. |
+| `DUPLICATE_WINDOW_SECONDS` | `30` | Камера шлёт один и тот же номер много раз, пока машина в кадре. Повтор того же номера с той же камеры в течение этого числа секунд с последнего появления не сохраняется и не отправляется в Telegram. `0` — отключить. |
+| `CORS_ALLOWED_ORIGINS` | *(пусто)* | Нужен только если открывать `index.html` прямо с диска (тогда `null`). Обычно не трогать. |
+| `TELEGRAM_BOT_ENABLED` | `false` | Включить Telegram-бота (уведомления о номерах, кнопки «Открыть шлагбаум»/«Отклонить», команда `/open_gate`). |
+| `TELEGRAM_BOT_TOKEN` | *(пусто)* | Токен бота от [@BotFather](https://t.me/botfather). Без него бот не запустится. |
+| `TELEGRAM_OWNER_ID` | *(пусто)* | Числовой Telegram ID владельца — главного администратора. **Без него никто не сможет выполнять команды.** Узнать свой ID: запустите бота без этой переменной и отправьте ему `/help`. |
+| `WEB_PUBLIC_URL` | *(пусто)* | Адрес, по которому браузер администратора открывает этот сервер, например `http://192.168.1.50:5080`. Нужен, чтобы команда `/weblogin` присылала ссылку для входа во вкладку Access; если пусто — бот пришлёт код, который нужно вставить вручную. |
+| `RELAY_BASE_URL` | `http://192.168.1.10` | Адрес реле (контроллера шлагбаума/ворот) в локальной сети. |
+| `RELAY_ENDPOINT` | `out1_pulse` | Путь на реле, на который отправляется `POST` при открытии ворот (`<RELAY_BASE_URL>/<RELAY_ENDPOINT>`). |
+
+Подробности по каждой функции — в разделах ниже (на английском).
+
 ## Run
 
 ```sh
@@ -131,15 +227,15 @@ who may use `/open_gate` (the owner, admins and users granted `open_gate`) get t
 123ABC02                  ← bold
 2026-10-05 14:23:07
 Camera: Gate Entrance
-[Open gate] [Deny]
+[Открыть шлагбаум] [Отклонить]
 ```
 
 The plate is the bold first line (Telegram has no font sizes, so bold is the most it can stand out). The time is the
 camera time; if the camera didn't send a usable one, it's the time the API received the event, in UTC.
 
-- **Open gate** pulses the relay like `/open_gate` and marks the event `granted`. If the relay fails, the event stays
+- **Открыть шлагбаум** (Open gate) pulses the relay like `/open_gate` and marks the event `granted`. If the relay fails, the event stays
   undecided and the buttons stay, so you can try again.
-- **Deny** only marks the event `denied`.
+- **Отклонить** (Deny) only marks the event `denied`.
 - The first press decides for everybody: every copy of the alert, including those sent without buttons, shows who decided
   ("✅ Gate opened by @bob" / "⛔ Denied by @bob"). A later press on a stale copy answers "Already granted by @bob".
 - Someone whose `open_gate` permission was revoked after the alert went out gets "Not allowed".
