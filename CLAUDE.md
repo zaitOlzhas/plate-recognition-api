@@ -36,7 +36,8 @@ On Windows, Docker Desktop must be running (error mentioning `dockerDesktopLinux
 - `Access/AccessService.cs` — the single place for role/permission rules and audit writes; both the bot and the web
   API call it. Returns `AccessResult` (Ok/Denied/Invalid) instead of throwing, and audits refused attempts too.
 - `Access/BotPermissions.cs` — catalog of grantable commands. New command = catalog entry + case in `BotCommandHandler`.
-- `Access/LoginCodeStore.cs` — single-use 5-minute codes in `IMemoryCache` (lost on restart, by design).
+- `Access/LoginCodeStore.cs` — single-use 5-minute 6-digit codes in `IMemoryCache` (lost on restart, by design);
+  10 wrong codes lock out all sign-ins for 5 minutes, since 6 digits are guessable.
 - `Parsing/` — deliberately lenient JSON/timestamp parsing; vendor payloads can be malformed (e.g. `"number": ,`).
   Don't make it stricter without tests covering the vendor quirks listed in the README.
 - `Data/` — `PlateEvent`, `BotCommandLog`, `BotUser`/`UserPermission`/`PermissionAudit`, `EventsDbContext`.

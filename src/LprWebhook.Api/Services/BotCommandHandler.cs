@@ -208,8 +208,9 @@ public class BotCommandHandler(
         var minutes = (int)LoginCodeStore.Lifetime.TotalMinutes;
         var baseUrl = options.Value.WebBaseUrl.Trim().TrimEnd('/');
         var text = baseUrl.Length > 0
-            ? $"Open this link within {minutes} minutes to sign in (works once):\n{baseUrl}/login?code={Uri.EscapeDataString(code)}"
-            : $"Paste this code into the Access tab within {minutes} minutes (works once):\n{code}";
+            ? $"Open this link within {minutes} minutes to sign in (works once):\n{baseUrl}/login?code={code}\n\n" +
+              $"Or enter the code on {baseUrl}/#access: {code}"
+            : $"Enter this code in the Access tab within {minutes} minutes (works once): {code}";
 
         record.Outcome = "success";
         record.ResultMessage = "login code issued"; // never store the code itself

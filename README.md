@@ -208,7 +208,7 @@ RELAY_ENDPOINT=out1_pulse
 | `/users` | admins | Lists known users with their roles and permissions |
 | `/grant <@user\|id> <permission>` | admins | Allows a command, e.g. `/grant @bob open_gate` |
 | `/revoke <@user\|id> <permission>` | admins | Removes it again |
-| `/weblogin` | admins | Private chat only. Replies with a one-time sign-in link (or code) for the web Access tab |
+| `/weblogin` | admins | Private chat only. Replies with a one-time sign-in link and 6-digit code for the web Access tab |
 | `/promote <@user\|id>` | admins | Makes someone an admin |
 | `/demote <@user\|id>` | admins | Removes admin (not the owner) |
 
@@ -299,7 +299,8 @@ the result (`ok`, `denied` or `invalid`).
 
 **Web Access tab:** open `http://<host>:5080/#access`.
 1. Send `/weblogin` to the bot in a private chat.
-2. Open the link it sends, or paste the code into the tab. Each link or code works once and expires after 5 minutes.
+2. Open the link it sends, or enter the 6-digit code in the tab. Each link or code works once and expires after 5 minutes.
+   After 10 wrong codes, all sign-ins are refused for 5 minutes (otherwise 6 digits could be guessed).
 3. You're signed in with a cookie for 12 hours (sliding).
 
 The tab lists users with a checkbox per command, has Make admin / Demote buttons, lets you add a user by
