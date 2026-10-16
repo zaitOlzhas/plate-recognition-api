@@ -233,7 +233,7 @@
             <tbody id="userRows" class="static"></tbody>
           </table>
         </div>
-        <p class="muted pad-x">Admins and the owner can use every command. Only the owner can promote or demote admins.
+        <p class="muted pad-x">Admins and the owner can use every command. Admins can promote or demote anyone except the owner.
           People appear here after they message the bot, or when added by ID.</p>
       </div>
 
@@ -792,7 +792,6 @@
       ...access.permissions.map(p => { const c = th(p.command, 'center'); c.title = p.description; return c; }),
       th('Last seen'), th(''));
 
-    const isOwner = access.me.role === 'owner';
     const fragment = document.createDocumentFragment();
     for (const u of users) {
       const tr = document.createElement('tr');
@@ -817,7 +816,7 @@
       });
 
       const actions = document.createElement('td');
-      if (isOwner && u.role !== 'owner') {
+      if (u.role !== 'owner') {
         const button = document.createElement('button');
         button.type = 'button';
         button.textContent = u.role === 'admin' ? 'Demote' : 'Make admin';

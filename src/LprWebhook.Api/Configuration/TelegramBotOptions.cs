@@ -5,7 +5,7 @@ public class TelegramBotOptions
     public bool Enabled { get; set; }
     public string BotToken { get; set; } = string.Empty;
 
-    /// <summary>Telegram user ID of the bot owner: always an admin, can promote/demote admins, can't be removed.</summary>
+    /// <summary>Telegram user ID of the bot owner: always an admin, can't be demoted.</summary>
     public long? OwnerUserId { get; set; }
 
     /// <summary>

@@ -53,8 +53,8 @@ On Windows, Docker Desktop must be running (error mentioning `dockerDesktopLinux
   of its last sighting (sliding) is answered `"duplicate"` and not stored/logged/alerted.
 - `Services/PlateAlertQueue.cs` + `PlateAlertHandler.cs` — the webhook enqueues each stored event (queue exists only
   with the bot on, so the endpoint takes it as `[FromServices] PlateAlertQueue?`); `TelegramBotService` drains it and
-  sends the alert to every known user (`AccessService.ListAlertRecipientsAsync`); only admins/owner get the
-  "Open gate"/"Deny" buttons, and `DecideAsync` accepts presses from admins only. Callback data is `open:<guid N>`/`deny:<guid N>`.
+  sends the alert to every known user (`AccessService.ListUsersWithPermissionAsync`); only those allowed `open_gate`
+  get the "Open gate"/"Deny" buttons. Callback data is `open:<guid N>`/`deny:<guid N>`.
   `DecideAsync` is Telegram-free (tested directly); first press wins via the `plate_decisions` PK, a failed relay
   removes the decision again. `plate_alert_messages` (key `ChatId`+`MessageId`) remembers every copy, including
   resends, so all of them get edited. Resend = `POST /api/access/events/{id}/resend-alert` (admin cookie, any event;
@@ -68,7 +68,7 @@ On Windows, Docker Desktop must be running (error mentioning `dockerDesktopLinux
 
 - owner = `TelegramBot:OwnerUserId` (config only, never a DB role, can't be demoted); admin = `bot_users.Role`;
   user = everyone else, with rows in `user_permissions`. Admins can use every command.
-- Only the owner changes roles; admins grant/revoke for regular users only. Without an owner configured nobody is admin.
+- Any admin changes roles (except the owner's) and grants/revokes for regular users. Without an owner configured nobody is admin.
 - `@username` resolves only for users who have messaged the bot (Telegram has no username lookup for bots).
 - DataProtection keys persist to `dp-keys/` next to the DB (`/data/dp-keys` in Docker) so cookies survive restarts.
 

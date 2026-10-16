@@ -112,20 +112,32 @@ public sealed class AccessServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task Only_the_owner_can_promote_and_demote()
+    public async Task Admins_and_the_owner_can_promote_and_demote_but_users_cannot()
     {
-        Assert.Equal(AccessStatus.Denied, (await _access.SetRoleAsync(Admin, UserId, Roles.Admin, "web")).Status);
-        Assert.Equal(AccessStatus.Denied, (await _access.SetRoleAsync(Admin, OtherAdminId, Roles.User, "web")).Status);
+        Assert.Equal(AccessStatus.Denied, (await _access.SetRoleAsync(User, UserId, Roles.Admin, "web")).Status);
+        Assert.Equal(AccessStatus.Denied, (await _access.SetRoleAsync(User, OtherAdminId, Roles.User, "web")).Status);
         Assert.Equal(Roles.User, await _access.GetRoleAsync(UserId));
         Assert.Equal(Roles.Admin, await _access.GetRoleAsync(OtherAdminId));
 
-        Assert.True((await _access.SetRoleAsync(Owner, UserId, Roles.Admin, "telegram")).IsOk);
+        Assert.True((await _access.SetRoleAsync(Admin, UserId, Roles.Admin, "telegram")).IsOk);
         Assert.Equal(Roles.Admin, await _access.GetRoleAsync(UserId));
+
+        Assert.True((await _access.SetRoleAsync(Admin, OtherAdminId, Roles.User, "telegram")).IsOk);
+        Assert.Equal(Roles.User, await _access.GetRoleAsync(OtherAdminId));
 
         Assert.True((await _access.SetRoleAsync(Owner, UserId, Roles.User, "telegram")).IsOk);
         Assert.Equal(Roles.User, await _access.GetRoleAsync(UserId));
 
-        Assert.Equal(4, await AuditCountAsync());
+        Assert.Equal(5, await AuditCountAsync());
+    }
+
+    [Fact]
+    public async Task Admin_cannot_demote_the_owner()
+    {
+        var result = await _access.SetRoleAsync(Admin, OwnerId, Roles.User, "web");
+
+        Assert.Equal(AccessStatus.Invalid, result.Status);
+        Assert.Equal(Roles.Owner, await _access.GetRoleAsync(OwnerId));
     }
 
     [Fact]

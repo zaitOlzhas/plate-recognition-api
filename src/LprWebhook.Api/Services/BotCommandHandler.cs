@@ -85,14 +85,9 @@ public class BotCommandHandler(
             sb.AppendLine("/grant <@user|id> <permission> - allow a command");
             sb.AppendLine("/revoke <@user|id> <permission> - remove a command");
             sb.AppendLine("/weblogin - get a one-time link to the web Access page");
-            sb.AppendLine($"Permissions: {string.Join(", ", BotPermissions.All.Select(p => p.Key))}");
-        }
-        if (role == Roles.Owner)
-        {
-            sb.AppendLine();
-            sb.AppendLine("Owner commands:");
             sb.AppendLine("/promote <@user|id> - make an admin");
             sb.AppendLine("/demote <@user|id> - remove admin");
+            sb.AppendLine($"Permissions: {string.Join(", ", BotPermissions.All.Select(p => p.Key))}");
         }
 
         record.Outcome = "success";
@@ -175,9 +170,9 @@ public class BotCommandHandler(
     private async Task ChangeRoleAsync(
         ITelegramBotClient bot, BotCommandLog record, Actor actor, string[] args, bool promote, CancellationToken ct)
     {
-        if (!access.IsOwner(actor.UserId))
+        if (!await access.IsAdminAsync(actor.UserId, ct))
         {
-            await DenyAsync(bot, record, "Только владелец может назначать и снимать администраторов.", ct);
+            await DenyAsync(bot, record, "Только администраторы могут назначать и снимать администраторов.", ct);
             return;
         }
         if (args.Length != 1)

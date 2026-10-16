@@ -26,7 +26,7 @@ public static class AccessEndpoints
         group.MapPost("/users", AddUserAsync).WithSummary("Add a user by Telegram ID");
         group.MapPut("/users/{userId:long}/permissions/{permission}", GrantAsync).WithSummary("Allow a command");
         group.MapDelete("/users/{userId:long}/permissions/{permission}", RevokeAsync).WithSummary("Remove a command");
-        group.MapPut("/users/{userId:long}/role", SetRoleAsync).WithSummary("Promote/demote (owner only)");
+        group.MapPut("/users/{userId:long}/role", SetRoleAsync).WithSummary("Promote/demote (admins; not the owner)");
         group.MapGet("/audit", ListAuditAsync).WithSummary("Permission changes, newest first");
         group.MapPost("/events/{id:guid}/resend-alert", ResendAlertAsync).WithSummary("Send a plate event's Telegram alert again");
 

@@ -46,18 +46,19 @@ public class AccessService(EventsDbContext db, IOptions<TelegramBotOptions> opti
     }
 
     /// <summary>
-    /// Every known user (the owner and everyone in bot_users), each flagged with whether they are an admin (or the
-    /// owner). Used for plate alerts: everyone sees them, only admins get buttons.
+    /// Every known user (the owner and everyone in bot_users), each flagged with whether they may use
+    /// <paramref name="permission"/>. Used for plate alerts: everyone sees them, only allowed users get buttons.
     /// </summary>
-    public async Task<IReadOnlyList<(long UserId, bool IsAdmin)>> ListAlertRecipientsAsync(CancellationToken ct = default)
+    public async Task<IReadOnlyList<(long UserId, bool Allowed)>> ListUsersWithPermissionAsync(string permission, CancellationToken ct = default)
     {
         var users = await db.BotUsers.Select(u => new { u.UserId, u.Role }).ToListAsync(ct);
+        var granted = (await db.UserPermissions.Where(p => p.Permission == permission).Select(p => p.UserId).ToListAsync(ct)).ToHashSet();
 
         var result = new List<(long, bool)>();
         if (_ownerId is { } ownerId) result.Add((ownerId, true));
         result.AddRange(users
             .Where(u => !IsOwner(u.UserId))
-            .Select(u => (u.UserId, u.Role == Roles.Admin)));
+            .Select(u => (u.UserId, u.Role == Roles.Admin || granted.Contains(u.UserId))));
         return result;
     }
 
@@ -152,7 +153,7 @@ public class AccessService(EventsDbContext db, IOptions<TelegramBotOptions> opti
         return result;
     }
 
-    /// <summary>Promote to admin or demote to user. Owner only.</summary>
+    /// <summary>Promote to admin or demote to user. Any admin may do it; the owner's role can't change.</summary>
     public async Task<AccessResult> SetRoleAsync(Actor actor, long targetId, string role, string source, CancellationToken ct = default)
     {
         var target = await db.BotUsers.FindAsync([targetId], ct);
@@ -160,8 +161,8 @@ public class AccessService(EventsDbContext db, IOptions<TelegramBotOptions> opti
         var action = role == Roles.Admin ? "promote" : "demote";
 
         AccessResult result;
-        if (!IsOwner(actor.UserId))
-            result = AccessResult.Denied("Только владелец может назначать и снимать администраторов.");
+        if (!await IsAdminAsync(actor.UserId, ct))
+            result = AccessResult.Denied("Только администраторы могут назначать и снимать администраторов.");
         else if (role is not (Roles.Admin or Roles.User))
             result = AccessResult.Invalid($"Неизвестная роль \"{role}\". Используйте \"admin\" или \"user\".");
         else if (IsOwner(targetId))

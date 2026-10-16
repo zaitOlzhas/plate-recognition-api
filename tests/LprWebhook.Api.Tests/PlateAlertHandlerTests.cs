@@ -16,7 +16,6 @@ public sealed class PlateAlertHandlerTests : IDisposable
     private const long OwnerId = 1;
     private const long GateUserId = 2;
     private const long StrangerId = 3;
-    private const long AdminId = 4;
 
     private sealed class FakeRelay : IRelayService
     {
@@ -44,8 +43,7 @@ public sealed class PlateAlertHandlerTests : IDisposable
         var access = new AccessService(_db, Options.Create(new TelegramBotOptions { OwnerUserId = OwnerId }));
         _handler = new PlateAlertHandler(_db, access, _relay, NullLogger<PlateAlertHandler>.Instance);
 
-        _db.BotUsers.AddRange(new BotUser { UserId = GateUserId, Username = "gate" }, new BotUser { UserId = StrangerId },
-            new BotUser { UserId = AdminId, Username = "admin", Role = Roles.Admin });
+        _db.BotUsers.AddRange(new BotUser { UserId = GateUserId, Username = "gate" }, new BotUser { UserId = StrangerId });
         _db.UserPermissions.Add(new UserPermission { UserId = GateUserId, Permission = BotPermissions.OpenGate });
         _db.PlateEvents.Add(new PlateEvent { Id = _eventId, ReceivedAtUtc = DateTime.UtcNow, PlateText = "123ABC02", RawJson = "{}" });
         _db.SaveChanges();
@@ -66,12 +64,12 @@ public sealed class PlateAlertHandlerTests : IDisposable
     [Fact]
     public async Task Open_gate_pulses_the_relay_and_marks_the_event_granted()
     {
-        var result = await _handler.DecideAsync(_eventId, PlateDecisionStatus.Granted, new Actor(AdminId, "@admin"), default);
+        var result = await _handler.DecideAsync(_eventId, PlateDecisionStatus.Granted, new Actor(GateUserId, "@gate"), default);
 
         Assert.True(result.IsOk);
         Assert.Equal(1, _relay.Calls);
         var d = await StoredDecisionAsync();
-        Assert.Equal((PlateDecisionStatus.Granted, AdminId, "@admin"), (d!.Status, d.DecidedByUserId, d.DecidedByName));
+        Assert.Equal((PlateDecisionStatus.Granted, GateUserId, "@gate"), (d!.Status, d.DecidedByUserId, d.DecidedByName));
     }
 
     [Fact]
@@ -88,7 +86,7 @@ public sealed class PlateAlertHandlerTests : IDisposable
     public async Task First_press_wins()
     {
         await _handler.DecideAsync(_eventId, PlateDecisionStatus.Denied, new Actor(OwnerId, "@owner"), default);
-        var second = await _handler.DecideAsync(_eventId, PlateDecisionStatus.Granted, new Actor(AdminId, "@admin"), default);
+        var second = await _handler.DecideAsync(_eventId, PlateDecisionStatus.Granted, new Actor(GateUserId, "@gate"), default);
 
         Assert.Equal("failed", second.Outcome);
         Assert.Equal("Уже отклонено пользователем @owner.", second.Message);
@@ -100,22 +98,21 @@ public sealed class PlateAlertHandlerTests : IDisposable
     public async Task Failed_relay_leaves_the_event_undecided_so_it_can_be_retried()
     {
         _relay.Succeeds = false;
-        var result = await _handler.DecideAsync(_eventId, PlateDecisionStatus.Granted, new Actor(AdminId, "@admin"), default);
+        var result = await _handler.DecideAsync(_eventId, PlateDecisionStatus.Granted, new Actor(GateUserId, "@gate"), default);
 
         Assert.Equal("failed", result.Outcome);
         Assert.Null(await StoredDecisionAsync());
 
         _relay.Succeeds = true;
-        Assert.True((await _handler.DecideAsync(_eventId, PlateDecisionStatus.Granted, new Actor(AdminId, "@admin"), default)).IsOk);
+        Assert.True((await _handler.DecideAsync(_eventId, PlateDecisionStatus.Granted, new Actor(GateUserId, "@gate"), default)).IsOk);
     }
 
     [Fact]
-    public async Task Non_admins_can_neither_open_nor_deny_even_with_open_gate()
+    public async Task Users_without_open_gate_can_neither_open_nor_deny()
     {
-        foreach (var userId in new[] { StrangerId, GateUserId })
         foreach (var status in new[] { PlateDecisionStatus.Granted, PlateDecisionStatus.Denied })
         {
-            var result = await _handler.DecideAsync(_eventId, status, new Actor(userId, null), default);
+            var result = await _handler.DecideAsync(_eventId, status, new Actor(StrangerId, null), default);
             Assert.Equal("denied", result.Outcome);
         }
         Assert.Equal(0, _relay.Calls);
@@ -123,13 +120,17 @@ public sealed class PlateAlertHandlerTests : IDisposable
     }
 
     [Fact]
-    public async Task Alerts_go_to_everyone_but_only_admins_get_buttons()
+    public async Task Alerts_go_to_everyone_but_only_open_gate_users_get_buttons()
     {
+        const long AdminId = 4;
+        _db.BotUsers.Add(new BotUser { UserId = AdminId, Role = Roles.Admin });
+        await _db.SaveChangesAsync();
+
         var access = new AccessService(_db, Options.Create(new TelegramBotOptions { OwnerUserId = OwnerId }));
-        var recipients = await access.ListAlertRecipientsAsync();
+        var recipients = await access.ListUsersWithPermissionAsync(BotPermissions.OpenGate);
 
         Assert.Equal(
-            [(OwnerId, true), (GateUserId, false), (StrangerId, false), (AdminId, true)],
+            [(OwnerId, true), (GateUserId, true), (StrangerId, false), (AdminId, true)],
             recipients.OrderBy(r => r.UserId));
     }
 

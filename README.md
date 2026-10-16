@@ -209,8 +209,8 @@ RELAY_ENDPOINT=out1_pulse
 | `/grant <@user\|id> <permission>` | admins | Allows a command, e.g. `/grant @bob open_gate` |
 | `/revoke <@user\|id> <permission>` | admins | Removes it again |
 | `/weblogin` | admins | Private chat only. Replies with a one-time sign-in link (or code) for the web Access tab |
-| `/promote <@user\|id>` | owner | Makes someone an admin |
-| `/demote <@user\|id>` | owner | Removes admin |
+| `/promote <@user\|id>` | admins | Makes someone an admin |
+| `/demote <@user\|id>` | admins | Removes admin (not the owner) |
 
 `/open_gate` replies with a success or error message based on the relay's response. Users who aren't allowed get
 "Not allowed. Your Telegram ID is N — send it to an admin", and the attempt is logged with outcome `denied`.
@@ -220,8 +220,8 @@ Commands sent in a group as `/open_gate@YourBot` work the same way.
 
 Every plate event that is stored (repeats are not, see `PlateEvents__DuplicateWindowSeconds`) is sent as a message
 to everyone the bot knows: the owner and every user who has messaged the bot or was added by ID. It goes to their
-private chat with the bot, so they must have started the bot at least once. Everyone sees the event, but only the
-owner and admins get the buttons (users granted `open_gate` can still use the `/open_gate` command):
+private chat with the bot, so they must have started the bot at least once. Everyone sees the event, but only people
+who may use `/open_gate` (the owner, admins and users granted `open_gate`) get the buttons:
 
 ```
 123ABC02                  ← bold
@@ -238,8 +238,7 @@ camera time; if the camera didn't send a usable one, it's the time the API recei
 - **Отклонить** (Deny) only marks the event `denied`.
 - The first press decides for everybody: every copy of the alert, including those sent without buttons, shows who decided
   ("✅ Gate opened by @bob" / "⛔ Denied by @bob"). A later press on a stale copy answers "Already granted by @bob".
-- Only admins can decide: a non-admin pressing a button (e.g. on an older alert, or after being demoted) gets
-  "Только администраторы могут открывать шлагбаум или отклонять въезд по уведомлению."
+- Someone whose `open_gate` permission was revoked after the alert went out gets "Not allowed".
 - **Resend:** a signed-in admin can click **Resend** on any plate event row in the viewer (or **Resend Telegram alert**
   in its details). Everyone gets another message for the same event, ending in "Resent by @admin". The earlier copies
   keep working, and whichever button is pressed first decides and updates every copy. Resending an event that was
@@ -283,11 +282,11 @@ Nobody can run a command unless they've been given it.
 
 | Role | Who | Can |
 |---|---|---|
-| owner | `TELEGRAM_OWNER_ID`, from config only | Everything. Promotes and demotes admins. Can't be demoted. |
-| admin | promoted by the owner | Every command. Grants and revokes commands for regular users. Signs in to the web Access tab. |
+| owner | `TELEGRAM_OWNER_ID`, from config only | Everything. Can't be demoted. |
+| admin | promoted by the owner or another admin | Every command. Grants and revokes commands for regular users. Promotes and demotes admins. Signs in to the web Access tab. |
 | user | anyone who messaged the bot, or was added by ID | Only the commands granted to them |
 
-Admins can't change other admins; only the owner can. Every check reads the database, so a revoke or demotion takes
+Any admin can promote or demote anyone except the owner. Every check reads the database, so a revoke or demotion takes
 effect immediately, including for an open web session.
 
 **Finding people:** `@username` only works for people who have messaged the bot at least once, because Telegram doesn't
@@ -303,7 +302,7 @@ the result (`ok`, `denied` or `invalid`).
 2. Open the link it sends, or paste the code into the tab. Each link or code works once and expires after 5 minutes.
 3. You're signed in with a cookie for 12 hours (sliding).
 
-The tab lists users with a checkbox per command, has Make admin / Demote buttons (owner only), lets you add a user by
+The tab lists users with a checkbox per command, has Make admin / Demote buttons, lets you add a user by
 Telegram ID, and shows the audit trail. The cookie's encryption keys are kept in `dp-keys/` next to the database (in
 Docker: the `lpr-data` volume), so sign-ins survive restarts.
 
@@ -421,7 +420,7 @@ Everything under `/api/access` needs that cookie, and the user must still be an 
 | `GET /api/access/users` | Users with role and permissions |
 | `POST /api/access/users {"userId":123}` | Add a user by Telegram ID |
 | `PUT` / `DELETE /api/access/users/{id}/permissions/{permission}` | Grant / revoke |
-| `PUT /api/access/users/{id}/role {"role":"admin"\|"user"}` | Promote / demote (owner only) |
+| `PUT /api/access/users/{id}/role {"role":"admin"\|"user"}` | Promote / demote (admins; not the owner) |
 | `GET /api/access/audit?page=&pageSize=` | Permission changes, newest first |
 | `POST /api/access/events/{id}/resend-alert` | Send a plate event's Telegram alert again. A decided event is reopened (its decision is cleared). `400` if the bot is off, `404` if it doesn't exist |
 

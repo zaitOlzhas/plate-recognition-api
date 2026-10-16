@@ -100,14 +100,17 @@ public sealed class AccessApiTests : IDisposable
     }
 
     [Fact]
-    public async Task Admin_cannot_promote_and_loses_access_immediately_when_demoted()
+    public async Task Admin_can_promote_and_loses_access_immediately_when_demoted()
     {
         var owner = await SignedInClientAsync(OwnerId);
         await owner.PutAsJsonAsync("/api/access/users/4004/role", new SetRoleRequest("admin"));
 
         var admin = await SignedInClientAsync(4004);
         var promote = await admin.PutAsJsonAsync("/api/access/users/5005/role", new SetRoleRequest("admin"));
-        Assert.Equal(HttpStatusCode.Forbidden, promote.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, promote.StatusCode);
+
+        var demoteOwner = await admin.PutAsJsonAsync($"/api/access/users/{OwnerId}/role", new SetRoleRequest("user"));
+        Assert.Equal(HttpStatusCode.BadRequest, demoteOwner.StatusCode);
 
         await owner.PutAsJsonAsync("/api/access/users/4004/role", new SetRoleRequest("user"));
         Assert.Equal(HttpStatusCode.Forbidden, (await admin.GetAsync("/api/access/users")).StatusCode);
